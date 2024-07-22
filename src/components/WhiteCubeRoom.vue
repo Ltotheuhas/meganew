@@ -42,7 +42,7 @@ export default {
     },
     handleKeydown(event) {
       switch (event.key.toLowerCase()) {
-        case 'u':
+        case 'b':
           this.toggleUploadMenu();
           break;
         case 'c':
@@ -55,17 +55,18 @@ export default {
     handleUpload(file) {
       const url = URL.createObjectURL(file);
       const extension = file.name.split('.').pop().toLowerCase();
+      console.log('Uploading file:', file);
 
       switch (extension) {
         case 'jpg':
         case 'jpeg':
         case 'png':
         case 'gif':
-          this.$refs.threeScene.addImage(url);
+          this.$refs.threeScene.addImage(url, file);
           break;
         case 'mp3':
         case 'wav':
-          this.$refs.threeScene.addAudio(url);
+          this.$refs.threeScene.addAudio(url, file);
           break;
         case 'gltf':
         case 'glb':
@@ -77,7 +78,7 @@ export default {
         case 'ply':
         case 'x3d':
         case 'wrl':
-          this.$refs.threeScene.addModel(url, extension);
+          this.$refs.threeScene.addModel(url, extension, file);
           break;
         default:
           console.error('Unsupported file type');
