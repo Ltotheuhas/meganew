@@ -12,6 +12,7 @@
     "@vue/cli": "^5.0.8",
     "core-js": "^3.8.3",
     "gifuct-js": "^2.1.2",
+    "html2canvas": "^1.4.1",
     "idb": "^8.0.0",
     "three-gltf-loader": "^1.111.0",
     "vue": "^3.2.13"

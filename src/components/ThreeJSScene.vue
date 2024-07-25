@@ -15,6 +15,9 @@ import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 // import { X3DLoader } from 'three/examples/jsm/loaders/X3DLoader.js';
 import { VRMLLoader } from 'three/examples/jsm/loaders/VRMLLoader.js';
 import { parseGIF, decompressFrames } from 'gifuct-js';
+import InfoLog from './InfoLog.vue';
+import { createApp, nextTick } from 'vue';
+import html2canvas from 'html2canvas';
 
 export default {
   name: 'ThreeJSScene',
@@ -40,7 +43,7 @@ export default {
     this.loadObjects();
   },
   methods: {
-    initThreeJS() {
+    async initThreeJS() {
       // Setup
       const container = this.$refs.threeContainer;
       const scene = new THREE.Scene();
@@ -63,7 +66,7 @@ export default {
       scene.add(axesHelper);
 
       // White Cube Room
-      const geometry = new THREE.BoxGeometry(10, 10, 10);
+      const geometry = new THREE.BoxGeometry(100, 100, 100);
       const material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
       const cube = new THREE.Mesh(geometry, material);
       scene.add(cube);
@@ -81,7 +84,7 @@ export default {
         const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
         // Position Plane at Center and adjust z-coordinate
-        plane.position.set(0, 2, 0);
+        plane.position.set(0, 4, 0);
         scene.add(plane);
 
         // Animation loop for rotating the image plane
@@ -111,7 +114,6 @@ export default {
 
       // Add event listeners for pointer lock error
       document.addEventListener('pointerlockerror', onPointerLockError);
-
       document.addEventListener('click', () => controls.lock());
 
       const move = this.move;
@@ -201,73 +203,182 @@ export default {
       });
 
       camera.position.set(0, 2, 5);
+
+      // Load InfoLog Component as Texture
+      const infoLogComponent = createApp(InfoLog);
+      const infoLogContainer = document.createElement('div');
+      document.body.appendChild(infoLogContainer);
+      infoLogComponent.mount(infoLogContainer);
+
+      await nextTick(); // Wait for Vue to render the component
+
+      const canvas = await html2canvas(infoLogContainer, {
+        backgroundColor: null,
+        scale: 2
+      });
+
+      const infoLogTexture = new THREE.CanvasTexture(canvas);
+      const infoLogAspect = canvas.width / canvas.height;
+      const infoLogPlaneGeometry = new THREE.PlaneGeometry(16, 16 / infoLogAspect);
+      const infoLogPlaneMaterial = new THREE.MeshBasicMaterial({ map: infoLogTexture, transparent: true });
+      const infoLogPlane = new THREE.Mesh(infoLogPlaneGeometry, infoLogPlaneMaterial);
+
+      // Position InfoLog Plane
+      infoLogPlane.position.set(0, 2, 0);
+      scene.add(infoLogPlane);
+
       this.scene = scene;
       this.camera = camera;
       this.renderer = renderer;
     },
+    async getFileTypeFromBlobUrl(blobUrl) {
+      const response = await fetch(blobUrl);
+      const blob = await response.blob();
+      return blob.type.split('/')[1]; // Get the extension part
+    },
     async addImage(url) {
+      console.log(`addImage called with URL: ${url}`);
+
+      // Determine the file type
+      const extension = await this.getFileTypeFromBlobUrl(url);
+      console.log(`Detected file type: ${extension}`);
+
       const textureLoader = new THREE.TextureLoader();
-      const extension = url.split('.').pop().toLowerCase();
 
       if (extension === 'gif') {
-        this.loadGIF(url);
+        console.log(`Detected GIF file, proceeding to load GIF: ${url}`);
+        const base64 = await this.blobToBase64(url);
+        const plane = await this.loadGIF(base64, this.scene);
+        this.objects.push({ type: 'image', base64, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
+        await this.saveObjects();
       } else {
+        console.log(`Loading non-GIF image from URL: ${url}`);
         textureLoader.load(url, async (texture) => {
           const aspect = texture.image.width / texture.image.height;
           const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
           const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
           const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
-          // Calculate the position in front of the camera
           const distance = 5; // Distance in front of the camera
           const vector = new THREE.Vector3(0, 0, -distance);
           vector.applyQuaternion(this.camera.quaternion);
           plane.position.copy(this.camera.position).add(vector);
 
-          // Ensure the plane is facing the camera
           plane.lookAt(this.camera.position);
 
           this.scene.add(plane);
-          this.objects.push({ type: 'image', url, position: plane.position.clone(), uuid: plane.uuid });
+          this.objects.push({ type: 'image', url, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
           await this.saveObjects();
+          console.log(`Non-GIF image added to the scene: ${url}`);
         });
       }
     },
-    async loadGIF(url) {
-      const response = await fetch(url);
-      const arrayBuffer = await response.arrayBuffer();
+    async blobToBase64(blobUrl) {
+      const response = await fetch(blobUrl);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    },
+    loadImageFromData(obj) {
+      const textureLoader = new THREE.TextureLoader();
+      const extension = obj.url ? obj.url.split('.').pop().toLowerCase() : 'gif';
+
+      console.log('Loading image from data:', obj);
+
+      if (extension === 'gif') {
+        if (obj.base64) {
+          this.loadGIF(obj.base64, this.scene, obj.position, obj.rotation);
+        } else {
+          console.error('No base64 data found for GIF image:', obj);
+        }
+      } else {
+        // Handle other image types
+        if (obj.url) {
+          textureLoader.load(obj.url, (texture) => {
+            const aspect = texture.image.width / texture.image.height;
+            const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
+            const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.position.copy(obj.position);
+            console.log('Restored position:', obj.position);
+            plane.rotation.copy(obj.rotation);
+            console.log('Restored rotation:', obj.rotation);
+            this.scene.add(plane);
+          }, undefined, (err) => {
+            console.error('Error loading texture:', err);
+          });
+        } else {
+          console.error('No URL found for image:', obj);
+        }
+      }
+    },
+    async loadGIF(base64, scene, position = null, rotation = null) {
+      const arrayBuffer = this.base64ToArrayBuffer(base64);
       const gif = parseGIF(arrayBuffer);
-      this.frames = decompressFrames(gif, true);
+      const frames = decompressFrames(gif, true);
 
-      this.canvas.width = this.frames[0].dims.width;
-      this.canvas.height = this.frames[0].dims.height;
-      this.ctx = this.canvas.getContext('2d');
+      const canvas = document.createElement('canvas');
+      canvas.width = frames[0].dims.width;
+      canvas.height = frames[0].dims.height;
+      const ctx = canvas.getContext('2d');
 
-      const texture = new THREE.CanvasTexture(this.canvas);
-      const aspect = this.canvas.width / this.canvas.height;
+      const texture = new THREE.CanvasTexture(canvas);
+      const aspect = canvas.width / canvas.height;
       const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
       const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
       const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
-      // Calculate the position in front of the camera
-      const distance = 5; // Distance in front of the camera
-      const vector = new THREE.Vector3(0, 0, -distance);
-      vector.applyQuaternion(this.camera.quaternion);
-      plane.position.copy(this.camera.position).add(vector);
+      console.log('Initial plane position:', plane.position);
+      console.log('Initial plane rotation:', plane.rotation);
 
-      // Ensure the plane is facing the camera
-      plane.lookAt(this.camera.position);
+      if (position) {
+        plane.position.copy(position);
+        console.log('Loaded position:', position);
+      } else {
+        const distance = 5; // Distance in front of the camera
+        const vector = new THREE.Vector3(0, 0, -distance);
+        vector.applyQuaternion(this.camera.quaternion);
+        plane.position.copy(this.camera.position).add(vector);
+        console.log('Calculated position in front of camera:', plane.position);
+      }
 
-      this.scene.add(plane);
-      this.objects.push({ type: 'image', url, position: plane.position.clone(), uuid: plane.uuid });
+      if (rotation) {
+        plane.rotation.copy(rotation);
+        console.log('Loaded rotation:', rotation);
+      } else {
+        plane.lookAt(this.camera.position);
+        console.log('Calculated rotation to face camera:', plane.rotation);
+      }
+
+      scene.add(plane);
+
+      let frameIndex = 0;
+      const animateGIF = () => {
+        requestAnimationFrame(animateGIF);
+        const frame = frames[frameIndex];
+        ctx.putImageData(new ImageData(new Uint8ClampedArray(frame.patch), frame.dims.width, frame.dims.height), frame.dims.left, frame.dims.top);
+        texture.needsUpdate = true;
+        frameIndex = (frameIndex + 1) % frames.length;
+      };
+      animateGIF();
+
+      this.objects.push({ type: 'image', base64, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
       await this.saveObjects();
 
-      const animateGif = () => {
-        requestAnimationFrame(animateGif);
-        this.renderFrame();
-        texture.needsUpdate = true;
-      };
-      animateGif();
+      return plane;
+    },
+    base64ToArrayBuffer(base64) {
+      const binaryString = window.atob(base64.split(',')[1]);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes.buffer;
     },
     renderFrame() {
       const frame = this.frames[this.frameIndex];
@@ -293,116 +404,150 @@ export default {
       this.objects.push({ type: 'audio', url, position: button.position.clone(), uuid: button.uuid });
       await this.saveObjects();
     },
-    async addModel(url, extension) {
-      let loader;
-
+    getLoader(extension) {
       switch (extension) {
         case 'gltf':
         case 'glb':
-          loader = new GLTFLoader();
-          break;
+          return new GLTFLoader();
         case 'obj':
-          loader = new OBJLoader();
-          break;
+          return new OBJLoader();
         case 'fbx':
-          loader = new FBXLoader();
-          break;
+          return new FBXLoader();
         case 'stl':
-          loader = new STLLoader();
-          break;
+          return new STLLoader();
         case 'dae':
-          loader = new ColladaLoader();
-          break;
+          return new ColladaLoader();
         case '3ds':
-          loader = new TDSLoader();
-          break;
+          return new TDSLoader();
         case 'ply':
-          loader = new PLYLoader();
-          break;
+          return new PLYLoader();
         /*case 'x3d':
-          loader = new X3DLoader();
-          break;*/
+          return new X3DLoader();*/
         case 'wrl':
-          loader = new VRMLLoader();
-          break;
+          return new VRMLLoader();
         default:
           console.error('Unsupported model file type');
-          return;
+          return null;
       }
+    },
+    async addModel(url, extension) {
+      const loader = this.getLoader(extension);
+      if (!loader) return;
 
-      loader.load(url, async (model) => {
-        let sceneObject;
-        if (model.scene) {
-          // For GLTF and Collada
-          sceneObject = model.scene;
-        } else if (model.isBufferGeometry) {
-          // For STL and PLY
-          const material = new THREE.MeshStandardMaterial();
-          sceneObject = new THREE.Mesh(model, material);
-        } else {
-          // For OBJ, FBX, TDS, X3D, and VRML
-          sceneObject = model;
-        }
+      // Fetch the model blob and convert it to base64
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64 = reader.result;
+        const modelData = {
+          type: 'model',
+          extension,
+          data: base64,
+          position: { x: 0, y: 0, z: 0 }, // Initial position placeholder
+          rotation: { x: 0, y: 0, z: 0, order: 'XYZ' }, // Initial rotation placeholder
+          uuid: THREE.MathUtils.generateUUID()
+        };
 
-        // Position the model in front of the camera
+        // Load the model and get its final position and rotation
+        const sceneObject = await this.loadModelFromData(modelData);
+
+        // Calculate the position in front of the camera
         const distance = 5; // Distance in front of the camera
         const vector = new THREE.Vector3(0, 0, -distance);
         vector.applyQuaternion(this.camera.quaternion);
         sceneObject.position.copy(this.camera.position).add(vector);
+        sceneObject.position.y = 0; // Set y position to ground level
 
-        this.scene.add(sceneObject);
-        this.objects.push({ type: 'model', url, extension, position: sceneObject.position.clone(), uuid: sceneObject.uuid });
-        await this.saveObjects();
-      });
+        // Rotate the model to face the camera along the Z-axis
+        const cameraDirection = new THREE.Vector3();
+        this.camera.getWorldDirection(cameraDirection);
+        cameraDirection.y = 0; // Zero out the Y component to align horizontally
+        cameraDirection.normalize();
+        const targetPosition = sceneObject.position.clone().add(cameraDirection);
+        sceneObject.lookAt(targetPosition);
+        sceneObject.rotation.x = 0; // Ensure no tilt in the X-axis
+        sceneObject.rotation.z = 0; // Ensure no tilt in the Z-axis
+
+        // Update the model data with the final position and rotation
+        modelData.position = sceneObject.position.clone();
+        modelData.rotation = sceneObject.rotation.clone();
+
+        // Store the updated model data in localStorage
+        localStorage.setItem(`model-${modelData.uuid}`, JSON.stringify(modelData));
+        this.objects.push(modelData);
+        this.saveObjects();
+      };
     },
     saveObjects() {
-      localStorage.setItem('threejs-objects', JSON.stringify(this.objects));
-    },
-    loadImageFromData(obj) {
-      const textureLoader = new THREE.TextureLoader();
-      const extension = obj.url.split('.').pop().toLowerCase();
-
-      if (extension === 'gif') {
-        this.loadGIF(obj.url);
-      } else {
-        textureLoader.load(obj.url, (texture) => {
-          const aspect = texture.image.width / texture.image.height;
-          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-          const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-          plane.position.copy(obj.position);
-          this.scene.add(plane);
-
-          // Add rotation
-          const animate = () => {
-            requestAnimationFrame(animate);
-            plane.rotation.y += 0.01;
+      const objects = this.objects.map(obj => {
+        if (obj && obj.type && obj.position && obj.rotation && obj.uuid) {
+          if (obj.type === 'model') {
+            const storedObj = localStorage.getItem(`model-${obj.uuid}`);
+            return JSON.parse(storedObj);
+          }
+          return {
+            type: obj.type,
+            base64: obj.base64 || null,
+            url: obj.url || null,
+            position: obj.position,
+            rotation: obj.rotation,
+            uuid: obj.uuid
           };
-          animate();
+        } else {
+          console.warn('Skipping invalid object:', obj);
+          return null;
+        }
+      }).filter(obj => obj !== null);
+
+      localStorage.setItem('threejs-objects', JSON.stringify(objects));
+      console.log('Saved objects:', objects); // Debugging log
+    },
+    async loadModelFromData(obj) {
+      console.log('Loading model from data:', obj); // Debugging log
+      const loader = this.getLoader(obj.extension);
+      if (!loader) return;
+
+      // Create a blob URL from the base64 data
+      const response = await fetch(obj.data);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+
+      return new Promise((resolve) => {
+        loader.load(url, (gltf) => {
+          let sceneObject;
+          if (gltf.scene) {
+            sceneObject = gltf.scene;
+          } else {
+            sceneObject = gltf;
+          }
+
+          // Set position and rotation
+          sceneObject.position.set(obj.position.x, obj.position.y, obj.position.z);
+          sceneObject.rotation.set(obj.rotation._x, obj.rotation._y, obj.rotation._z, obj.rotation._order);
+
+          sceneObject.uuid = obj.uuid; // Assign the saved UUID
+
+          this.scene.add(sceneObject);
+          resolve(sceneObject); // Resolve with the scene object
         });
-      }
-    },
-    loadAudioFromData(obj) {
-      const audio = new Audio(obj.url);
-      const buttonGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const buttonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-      const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
-      button.position.copy(obj.position);
-      button.userData = { onClick: () => audio.play() };
-      this.scene.add(button);
-    },
-    loadModelFromData(obj) {
-      const loader = new GLTFLoader();
-      loader.load(obj.url, (gltf) => {
-        gltf.scene.position.copy(obj.position);
-        this.scene.add(gltf.scene);
       });
     },
     loadObjects() {
       const savedObjects = localStorage.getItem('threejs-objects');
       if (savedObjects) {
         this.objects = JSON.parse(savedObjects);
-        this.objects.forEach(obj => {
+        console.log('Loaded objects:', this.objects); // Debugging log
+
+        this.objects.forEach((obj, index) => {
+          console.log('Processing object:', obj); // Debugging log
+
+          if (!obj || !obj.type) {
+            console.error(`Invalid object at index ${index}:`, obj);
+            return;
+          }
+
           switch (obj.type) {
             case 'image':
               this.loadImageFromData(obj);
@@ -413,19 +558,52 @@ export default {
             case 'model':
               this.loadModelFromData(obj);
               break;
+            default:
+              console.warn('Unknown object type:', obj.type); // Debugging log
           }
         });
       }
     },
     clearObjects() {
+      console.log('Clearing all objects from the scene and local storage.'); // Debugging log
+
+      // Iterate through the objects array
       this.objects.forEach(obj => {
-        const threeObject = this.scene.getObjectByProperty('uuid', obj.uuid);
-        if (threeObject) {
-          this.scene.remove(threeObject);
+        if (obj && obj.uuid) { // Check if the object and its UUID are valid
+          const threeObject = this.scene.getObjectByProperty('uuid', obj.uuid);
+          if (threeObject) {
+            this.scene.remove(threeObject);
+            console.log(`Removed object with UUID: ${obj.uuid}`); // Debugging log
+
+            // Dispose of the object's geometry and material to free up memory
+            if (threeObject.geometry) threeObject.geometry.dispose();
+            if (threeObject.material) {
+              if (Array.isArray(threeObject.material)) {
+                threeObject.material.forEach(material => material.dispose());
+              } else {
+                threeObject.material.dispose();
+              }
+            }
+          } else {
+            console.warn(`Object with UUID: ${obj.uuid} not found in the scene.`); // Debugging log
+          }
+
+          // Remove model data from localStorage if it is a model
+          if (obj.type === 'model') {
+            localStorage.removeItem(`model-${obj.uuid}`);
+            console.log(`Removed model data from localStorage with UUID: ${obj.uuid}`); // Debugging log
+          }
+        } else {
+          console.warn('Encountered invalid object or object without UUID:', obj); // Debugging log
         }
       });
+
+      // Clear the objects array
       this.objects = [];
+
+      // Remove saved objects from local storage
       localStorage.removeItem('threejs-objects');
+      console.log('All objects have been cleared.'); // Debugging log
     },
   },
   beforeUnmount() {
