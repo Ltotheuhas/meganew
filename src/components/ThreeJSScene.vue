@@ -14,7 +14,7 @@ import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 // import { X3DLoader } from 'three/examples/jsm/loaders/X3DLoader.js';
 import { VRMLLoader } from 'three/examples/jsm/loaders/VRMLLoader.js';
-import { saveObject, saveFile, getAllObjects, getFile, clearAllObjects } from '@/utils/indexedDB';
+import { parseGIF, decompressFrames } from 'gifuct-js';
 
 export default {
   name: 'ThreeJSScene',
@@ -28,25 +28,30 @@ export default {
       },
       touchStart: { x: 0, y: 0 },
       objects: [],
+      canvas: document.createElement('canvas'),
+      ctx: null,
+      frames: [],
+      frameIndex: 0,
+      playing: true,
     };
   },
-  async mounted() {
-    await this.initThreeJS();
-    await this.loadObjects();
+  mounted() {
+    this.initThreeJS();
+    this.loadObjects();
   },
   methods: {
-    async initThreeJS() {
+    initThreeJS() {
       // Setup
       const container = this.$refs.threeContainer;
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.rotation.order = 'YXZ';  // Ensure proper rotation order
+      camera.rotation.order = 'YXZ'; // Ensure proper rotation order
       const renderer = new THREE.WebGLRenderer();
       renderer.setSize(window.innerWidth, window.innerHeight);
       container.appendChild(renderer.domElement);
 
       // Lighting
-      const light = new THREE.AmbientLight(0xFFFFFF); // white light
+      const light = new THREE.AmbientLight(0xffffff); // white light
       scene.add(light);
 
       // Grid Helper
@@ -200,29 +205,78 @@ export default {
       this.camera = camera;
       this.renderer = renderer;
     },
-    async addImage(url, file) {
+    async addImage(url) {
       const textureLoader = new THREE.TextureLoader();
-      textureLoader.load(url, async (texture) => {
-        const aspect = texture.image.width / texture.image.height;
-        const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-        const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+      const extension = url.split('.').pop().toLowerCase();
 
-        // Calculate the position in front of the camera
-        const distance = 5; // Distance in front of the camera
-        const vector = new THREE.Vector3(0, 0, -distance);
-        vector.applyQuaternion(this.camera.quaternion);
-        plane.position.copy(this.camera.position).add(vector);
+      if (extension === 'gif') {
+        this.loadGIF(url);
+      } else {
+        textureLoader.load(url, async (texture) => {
+          const aspect = texture.image.width / texture.image.height;
+          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
+          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+          const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
-        // Ensure the plane is facing the camera
-        plane.lookAt(this.camera.position);
+          // Calculate the position in front of the camera
+          const distance = 5; // Distance in front of the camera
+          const vector = new THREE.Vector3(0, 0, -distance);
+          vector.applyQuaternion(this.camera.quaternion);
+          plane.position.copy(this.camera.position).add(vector);
 
-        this.scene.add(plane);
-        await saveObject({ type: 'image', url, position: plane.position.clone(), uuid: plane.uuid });
-        await saveFile(url, file);
-      });
+          // Ensure the plane is facing the camera
+          plane.lookAt(this.camera.position);
+
+          this.scene.add(plane);
+          this.objects.push({ type: 'image', url, position: plane.position.clone(), uuid: plane.uuid });
+          await this.saveObjects();
+        });
+      }
     },
-    async addAudio(url, file) {
+    async loadGIF(url) {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const gif = parseGIF(arrayBuffer);
+      this.frames = decompressFrames(gif, true);
+
+      this.canvas.width = this.frames[0].dims.width;
+      this.canvas.height = this.frames[0].dims.height;
+      this.ctx = this.canvas.getContext('2d');
+
+      const texture = new THREE.CanvasTexture(this.canvas);
+      const aspect = this.canvas.width / this.canvas.height;
+      const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
+      const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+      const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+      // Calculate the position in front of the camera
+      const distance = 5; // Distance in front of the camera
+      const vector = new THREE.Vector3(0, 0, -distance);
+      vector.applyQuaternion(this.camera.quaternion);
+      plane.position.copy(this.camera.position).add(vector);
+
+      // Ensure the plane is facing the camera
+      plane.lookAt(this.camera.position);
+
+      this.scene.add(plane);
+      this.objects.push({ type: 'image', url, position: plane.position.clone(), uuid: plane.uuid });
+      await this.saveObjects();
+
+      const animateGif = () => {
+        requestAnimationFrame(animateGif);
+        this.renderFrame();
+        texture.needsUpdate = true;
+      };
+      animateGif();
+    },
+    renderFrame() {
+      const frame = this.frames[this.frameIndex];
+      const { dims, patch } = frame;
+      this.ctx.putImageData(new ImageData(new Uint8ClampedArray(patch), dims.width, dims.height), dims.left, dims.top);
+
+      this.frameIndex = (this.frameIndex + 1) % this.frames.length;
+    },
+    async addAudio(url) {
       const audio = new Audio(url);
       const buttonGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
       const buttonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
@@ -236,10 +290,10 @@ export default {
 
       button.userData = { onClick: () => audio.play() };
       this.scene.add(button);
-      await saveObject({ type: 'audio', url, position: button.position.clone(), uuid: button.uuid });
-      await saveFile(url, file);
+      this.objects.push({ type: 'audio', url, position: button.position.clone(), uuid: button.uuid });
+      await this.saveObjects();
     },
-    async addModel(url, file, extension) {
+    async addModel(url, extension) {
       let loader;
 
       switch (extension) {
@@ -265,9 +319,9 @@ export default {
         case 'ply':
           loader = new PLYLoader();
           break;
-        // case 'x3d':
-        //   loader = new X3DLoader();
-        //   break;
+        /*case 'x3d':
+          loader = new X3DLoader();
+          break;*/
         case 'wrl':
           loader = new VRMLLoader();
           break;
@@ -297,48 +351,39 @@ export default {
         sceneObject.position.copy(this.camera.position).add(vector);
 
         this.scene.add(sceneObject);
-        await saveObject({ type: 'model', url, extension, position: sceneObject.position.clone(), uuid: sceneObject.uuid });
-        await saveFile(url, file);
+        this.objects.push({ type: 'model', url, extension, position: sceneObject.position.clone(), uuid: sceneObject.uuid });
+        await this.saveObjects();
       });
     },
-    async loadObjects() {
-      const objects = await getAllObjects();
-      for (const obj of objects) {
-        switch (obj.type) {
-          case 'image':
-            await this.loadImageFromData(obj);
-            break;
-          case 'audio':
-            await this.loadAudioFromData(obj);
-            break;
-          case 'model':
-            await this.loadModelFromData(obj);
-            break;
-        }
+    saveObjects() {
+      localStorage.setItem('threejs-objects', JSON.stringify(this.objects));
+    },
+    loadImageFromData(obj) {
+      const textureLoader = new THREE.TextureLoader();
+      const extension = obj.url.split('.').pop().toLowerCase();
+
+      if (extension === 'gif') {
+        this.loadGIF(obj.url);
+      } else {
+        textureLoader.load(obj.url, (texture) => {
+          const aspect = texture.image.width / texture.image.height;
+          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
+          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+          const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+          plane.position.copy(obj.position);
+          this.scene.add(plane);
+
+          // Add rotation
+          const animate = () => {
+            requestAnimationFrame(animate);
+            plane.rotation.y += 0.01;
+          };
+          animate();
+        });
       }
     },
-    async loadImageFromData(obj) {
-      const url = URL.createObjectURL(await getFile(obj.url));
-      const textureLoader = new THREE.TextureLoader();
-      textureLoader.load(url, (texture) => {
-        const aspect = texture.image.width / texture.image.height;
-        const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-        const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-        plane.position.copy(obj.position);
-        this.scene.add(plane);
-
-        // Add rotation
-        const animate = () => {
-          requestAnimationFrame(animate);
-          plane.rotation.y += 0.01;
-        };
-        animate();
-      });
-    },
-    async loadAudioFromData(obj) {
-      const url = URL.createObjectURL(await getFile(obj.url));
-      const audio = new Audio(url);
+    loadAudioFromData(obj) {
+      const audio = new Audio(obj.url);
       const buttonGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
       const buttonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
       const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
@@ -346,63 +391,33 @@ export default {
       button.userData = { onClick: () => audio.play() };
       this.scene.add(button);
     },
-    async loadModelFromData(obj) {
-      const url = URL.createObjectURL(await getFile(obj.url));
-      let loader;
-
-      switch (obj.extension) {
-        case 'gltf':
-        case 'glb':
-          loader = new GLTFLoader();
-          break;
-        case 'obj':
-          loader = new OBJLoader();
-          break;
-        case 'fbx':
-          loader = new FBXLoader();
-          break;
-        case 'stl':
-          loader = new STLLoader();
-          break;
-        case 'dae':
-          loader = new ColladaLoader();
-          break;
-        case '3ds':
-          loader = new TDSLoader();
-          break;
-        case 'ply':
-          loader = new PLYLoader();
-          break;
-        // case 'x3d':
-        //   loader = new X3DLoader();
-        //   break;
-        case 'wrl':
-          loader = new VRMLLoader();
-          break;
-        default:
-          console.error('Unsupported model file type');
-          return;
-      }
-
-      loader.load(url, (model) => {
-        let sceneObject;
-        if (model.scene) {
-          // For GLTF and Collada
-          sceneObject = model.scene;
-        } else if (model.isBufferGeometry) {
-          // For STL and PLY
-          const material = new THREE.MeshStandardMaterial();
-          sceneObject = new THREE.Mesh(model, material);
-        } else {
-          // For OBJ, FBX, TDS, X3D, and VRML
-          sceneObject = model;
-        }
-        sceneObject.position.copy(obj.position);
-        this.scene.add(sceneObject);
+    loadModelFromData(obj) {
+      const loader = new GLTFLoader();
+      loader.load(obj.url, (gltf) => {
+        gltf.scene.position.copy(obj.position);
+        this.scene.add(gltf.scene);
       });
     },
-    async clearObjects() {
-      await clearAllObjects();
+    loadObjects() {
+      const savedObjects = localStorage.getItem('threejs-objects');
+      if (savedObjects) {
+        this.objects = JSON.parse(savedObjects);
+        this.objects.forEach(obj => {
+          switch (obj.type) {
+            case 'image':
+              this.loadImageFromData(obj);
+              break;
+            case 'audio':
+              this.loadAudioFromData(obj);
+              break;
+            case 'model':
+              this.loadModelFromData(obj);
+              break;
+          }
+        });
+      }
+    },
+    clearObjects() {
       this.objects.forEach(obj => {
         const threeObject = this.scene.getObjectByProperty('uuid', obj.uuid);
         if (threeObject) {
@@ -410,6 +425,7 @@ export default {
         }
       });
       this.objects = [];
+      localStorage.removeItem('threejs-objects');
     },
   },
   beforeUnmount() {

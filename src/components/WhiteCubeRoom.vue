@@ -53,20 +53,26 @@ export default {
       }
     },
     handleUpload(file) {
+      const fileSizeLimit = 10 * 1024 * 1024;
+
+      if (file.size > fileSizeLimit) {
+        alert('File size exceeds the limit of ' + fileSizeLimit / 1024 / 1024 + 'MB.');
+        return;
+      }
+
       const url = URL.createObjectURL(file);
       const extension = file.name.split('.').pop().toLowerCase();
-      console.log('Uploading file:', file);
 
       switch (extension) {
         case 'jpg':
         case 'jpeg':
         case 'png':
         case 'gif':
-          this.$refs.threeScene.addImage(url, file);
+          this.$refs.threeScene.addImage(url);
           break;
         case 'mp3':
         case 'wav':
-          this.$refs.threeScene.addAudio(url, file);
+          this.$refs.threeScene.addAudio(url);
           break;
         case 'gltf':
         case 'glb':
@@ -78,7 +84,7 @@ export default {
         case 'ply':
         case 'x3d':
         case 'wrl':
-          this.$refs.threeScene.addModel(url, extension, file);
+          this.$refs.threeScene.addModel(url, extension);
           break;
         default:
           console.error('Unsupported file type');
