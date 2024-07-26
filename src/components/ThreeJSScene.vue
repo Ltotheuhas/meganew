@@ -40,7 +40,7 @@ export default {
   },
   mounted() {
     this.initThreeJS();
-    this.loadObjects();
+    this.loadObjectsFromBackend();
   },
   methods: {
     async initThreeJS() {
@@ -114,7 +114,12 @@ export default {
 
       // Add event listeners for pointer lock error
       document.addEventListener('pointerlockerror', onPointerLockError);
-      document.addEventListener('click', () => controls.lock());
+
+      document.addEventListener('click', () => {
+        if (!this.$parent.showUploadMenu) { // Only lock if upload menu is not open
+          controls.lock();
+        }
+      });
 
       const move = this.move;
 
@@ -231,6 +236,61 @@ export default {
       this.camera = camera;
       this.renderer = renderer;
     },
+    async saveObjectsToBackend() {
+      try {
+        for (const obj of this.objects) {
+          // Check if the object is a GIF and has base64 data
+          if (obj.type === 'image' && obj.url && obj.url.endsWith('.gif') && obj.base64) {
+            obj.data = obj.base64;
+          }
+          const response = await fetch('http://localhost:3000/objects', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(obj),
+          });
+          const savedObject = await response.json();
+          console.log('Saved object:', savedObject); // Debugging log
+        }
+        console.log('Objects saved to backend successfully');
+      } catch (error) {
+        console.error('Error saving objects to backend:', error);
+      }
+    },
+    async loadObjectsFromBackend() {
+      try {
+        const response = await fetch('http://localhost:3000/objects');
+        if (!response.ok) {
+          throw new Error('Failed to load objects from backend');
+        }
+        const objects = await response.json();
+        this.objects = objects;
+        this.objects.forEach(obj => {
+          if (obj.type === 'image' && obj.url && obj.url.endsWith('.gif') && obj.data) {
+            obj.base64 = obj.data; // Assign the base64 data
+          }
+          this.loadObject(obj);
+        });
+      } catch (error) {
+        console.error('Error loading objects from backend:', error);
+      }
+    },
+    loadObject(obj) {
+      switch (obj.type) {
+        case 'image':
+          this.loadImageFromData(obj);
+          break;
+        case 'audio':
+          this.loadAudioFromData(obj);
+          break;
+        case 'model':
+          this.loadModelFromData(obj);
+          break;
+        default:
+          console.warn('Unknown object type:', obj.type);
+      }
+    },
     async getFileTypeFromBlobUrl(blobUrl) {
       const response = await fetch(blobUrl);
       const blob = await response.blob();
@@ -250,7 +310,7 @@ export default {
         const base64 = await this.blobToBase64(url);
         const plane = await this.loadGIF(base64, this.scene);
         this.objects.push({ type: 'image', base64, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
-        await this.saveObjects();
+        await this.saveObjectsToBackend();
       } else {
         console.log(`Loading non-GIF image from URL: ${url}`);
         textureLoader.load(url, async (texture) => {
@@ -268,7 +328,7 @@ export default {
 
           this.scene.add(plane);
           this.objects.push({ type: 'image', url, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
-          await this.saveObjects();
+          await this.saveObjectsToBackend();
           console.log(`Non-GIF image added to the scene: ${url}`);
         });
       }
@@ -367,7 +427,7 @@ export default {
       animateGIF();
 
       this.objects.push({ type: 'image', base64, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
-      await this.saveObjects();
+      await this.saveObjectsToBackend();
 
       return plane;
     },
@@ -402,7 +462,7 @@ export default {
       button.userData = { onClick: () => audio.play() };
       this.scene.add(button);
       this.objects.push({ type: 'audio', url, position: button.position.clone(), uuid: button.uuid });
-      await this.saveObjects();
+      await this.saveObjectsToBackend();
     },
     getLoader(extension) {
       switch (extension) {
@@ -474,35 +534,9 @@ export default {
         modelData.position = sceneObject.position.clone();
         modelData.rotation = sceneObject.rotation.clone();
 
-        // Store the updated model data in localStorage
-        localStorage.setItem(`model-${modelData.uuid}`, JSON.stringify(modelData));
         this.objects.push(modelData);
-        this.saveObjects();
+        await this.saveObjectsToBackend();
       };
-    },
-    saveObjects() {
-      const objects = this.objects.map(obj => {
-        if (obj && obj.type && obj.position && obj.rotation && obj.uuid) {
-          if (obj.type === 'model') {
-            const storedObj = localStorage.getItem(`model-${obj.uuid}`);
-            return JSON.parse(storedObj);
-          }
-          return {
-            type: obj.type,
-            base64: obj.base64 || null,
-            url: obj.url || null,
-            position: obj.position,
-            rotation: obj.rotation,
-            uuid: obj.uuid
-          };
-        } else {
-          console.warn('Skipping invalid object:', obj);
-          return null;
-        }
-      }).filter(obj => obj !== null);
-
-      localStorage.setItem('threejs-objects', JSON.stringify(objects));
-      console.log('Saved objects:', objects); // Debugging log
     },
     async loadModelFromData(obj) {
       console.log('Loading model from data:', obj); // Debugging log
@@ -534,36 +568,6 @@ export default {
         });
       });
     },
-    loadObjects() {
-      const savedObjects = localStorage.getItem('threejs-objects');
-      if (savedObjects) {
-        this.objects = JSON.parse(savedObjects);
-        console.log('Loaded objects:', this.objects); // Debugging log
-
-        this.objects.forEach((obj, index) => {
-          console.log('Processing object:', obj); // Debugging log
-
-          if (!obj || !obj.type) {
-            console.error(`Invalid object at index ${index}:`, obj);
-            return;
-          }
-
-          switch (obj.type) {
-            case 'image':
-              this.loadImageFromData(obj);
-              break;
-            case 'audio':
-              this.loadAudioFromData(obj);
-              break;
-            case 'model':
-              this.loadModelFromData(obj);
-              break;
-            default:
-              console.warn('Unknown object type:', obj.type); // Debugging log
-          }
-        });
-      }
-    },
     clearObjects() {
       console.log('Clearing all objects from the scene and local storage.'); // Debugging log
 
@@ -587,12 +591,6 @@ export default {
           } else {
             console.warn(`Object with UUID: ${obj.uuid} not found in the scene.`); // Debugging log
           }
-
-          // Remove model data from localStorage if it is a model
-          if (obj.type === 'model') {
-            localStorage.removeItem(`model-${obj.uuid}`);
-            console.log(`Removed model data from localStorage with UUID: ${obj.uuid}`); // Debugging log
-          }
         } else {
           console.warn('Encountered invalid object or object without UUID:', obj); // Debugging log
         }
@@ -601,10 +599,8 @@ export default {
       // Clear the objects array
       this.objects = [];
 
-      // Remove saved objects from local storage
-      localStorage.removeItem('threejs-objects');
       console.log('All objects have been cleared.'); // Debugging log
-    },
+    }
   },
   beforeUnmount() {
     // Cleanup event listeners
