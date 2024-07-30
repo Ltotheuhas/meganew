@@ -1,49 +1,21 @@
 {
-  "name": "megatest",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "serve": "vue-cli-service serve",
-    "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint",
-    "commit": "node -e \"const execSync = require('child_process').execSync; const readline = require('readline'); const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question('Enter your commit message: ', (message) => { rl.close(); const commands = ['npm run build', 'git add .']; try { execSync('git diff-index --quiet HEAD --'); console.log('No changes to commit.'); } catch (e) { commands.push(`git commit -m \\\"${message}\\\"`); commands.push('git push origin main'); } try { execSync('git worktree remove gh-pages --force', { stdio: 'inherit', shell: true }); } catch (error) { console.log('No existing worktree to remove.'); } commands.push('git worktree add -B gh-pages gh-pages origin/gh-pages'); commands.forEach((cmd) => { try { execSync(cmd, { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute command:', cmd, '\\n', error); process.exit(1); } }); try { execSync('xcopy dist gh-pages /E /H /C /I /Y', { stdio: 'inherit', shell: true }); execSync('cd gh-pages && git add . && git commit -m \\\"Deploy to gh-pages\\\" && git push origin gh-pages', { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute deployment commands:', '\\n', error); process.exit(1); } });\""
-  },
-  "dependencies": {
-    "@vue/cli": "^5.0.8",
-    "core-js": "^3.8.3",
-    "gifuct-js": "^2.1.2",
-    "html2canvas": "^1.4.1",
-    "idb": "^8.0.0",
-    "three-gltf-loader": "^1.111.0",
-    "vue": "^3.2.13"
-  },
-  "devDependencies": {
-    "@babel/core": "^7.12.16",
-    "@babel/eslint-parser": "^7.12.16",
-    "@vue/cli-plugin-babel": "~5.0.0",
-    "@vue/cli-plugin-eslint": "~5.0.0",
-    "@vue/cli-service": "~5.0.0",
-    "eslint": "^7.32.0",
-    "eslint-plugin-vue": "^8.0.3"
-  },
-  "eslintConfig": {
-    "root": true,
-    "env": {
-      "node": true
+    "name": "megaproject",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+      "build": "npm run build --prefix frontend && npm run build --prefix backend",
+      "start": "concurrently \"npm run server\" \"npm run client\"",
+      "server": "node backend/server.js",
+      "client": "npm run serve --prefix frontend",
+      "commit": "node -e \"const execSync = require('child_process').execSync; const readline = require('readline'); const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question('Enter your commit message: ', (message) => { rl.close(); const commands = ['npm run build', 'git add .']; try { execSync('git diff-index --quiet HEAD --'); console.log('No changes to commit.'); } catch (e) { commands.push(`git commit -m \\\"${message}\\\"`); commands.push('git push origin main'); } try { execSync('git worktree remove gh-pages --force', { stdio: 'inherit', shell: true }); } catch (error) { console.log('No existing worktree to remove.'); } commands.push('git worktree add -B gh-pages gh-pages origin/gh-pages'); commands.forEach((cmd) => { try { execSync(cmd, { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute command:', cmd, '\\n', error); process.exit(1); } }); try { execSync('xcopy dist gh-pages /E /H /C /I /Y', { stdio: 'inherit', shell: true }); execSync('cd gh-pages && git add . && git commit -m \\\"Deploy to gh-pages\\\" && git push origin gh-pages', { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute deployment commands:', '\\n', error); process.exit(1); } });\""
     },
-    "extends": [
-      "plugin:vue/vue3-essential",
-      "eslint:recommended"
-    ],
-    "parserOptions": {
-      "parser": "@babel/eslint-parser"
+    "dependencies": {
+      "body-parser": "^1.20.2",
+      "cors": "^2.8.5",
+      "express": "^4.19.2",
+      "mongoose": "^8.5.1",
+      "concurrently": "^7.0.0"
     },
-    "rules": {}
-  },
-  "browserslist": [
-    "> 1%",
-    "last 2 versions",
-    "not dead",
-    "not ie 11"
-  ]
-}
+    "devDependencies": {}
+  }
+  
