@@ -13,18 +13,18 @@ set /p COMMIT_MESSAGE=Enter your commit message:
   git add .
 
   echo Committing changes to main branch
-  git commit -m "%COMMIT_MESSAGE%"
+  git diff-index --quiet HEAD --
   if %errorlevel% neq 0 (
-    echo No changes to commit in main branch.
-  ) else (
+    git commit -m "%COMMIT_MESSAGE%"
     echo Pushing to origin main
     git push origin main
+  ) else (
+    echo No changes to commit.
   )
 
   echo Checking if gh-pages worktree exists
-  git worktree list | findstr /c:"frontend\gh-pages"
-  if %errorlevel% neq 0 (
-    echo Adding new gh-pages worktree
+  if not exist frontend\gh-pages (
+    echo gh-pages worktree does not exist, creating it
     git worktree add -B gh-pages frontend\gh-pages origin/gh-pages
   ) else (
     echo gh-pages worktree already exists
