@@ -21,11 +21,14 @@ set /p COMMIT_MESSAGE=Enter your commit message:
     git push origin main
   )
 
-  echo Removing existing gh-pages worktree if it exists
-  git worktree remove frontend\gh-pages --force || echo No existing worktree to remove.
-
-  echo Adding new gh-pages worktree
-  git worktree add -B gh-pages frontend\gh-pages origin/gh-pages
+  echo Checking if gh-pages worktree exists
+  git worktree list | findstr /c:"frontend\gh-pages"
+  if %errorlevel% neq 0 (
+    echo Adding new gh-pages worktree
+    git worktree add -B gh-pages frontend\gh-pages origin/gh-pages
+  ) else (
+    echo gh-pages worktree already exists
+  )
 
   echo Copying build output to gh-pages directory
   xcopy frontend\dist frontend\gh-pages /E /H /C /I /Y
