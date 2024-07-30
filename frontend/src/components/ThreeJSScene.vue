@@ -36,11 +36,15 @@ export default {
       frames: [],
       frameIndex: 0,
       playing: true,
+      infoLogComponent: null,
+      infoLogContainer: null,
+      infoLogTexture: null,
     };
   },
   mounted() {
     this.initThreeJS();
     this.loadObjectsFromBackend();
+    this.setupPeriodicUpdate();
   },
   methods: {
     async initThreeJS() {
@@ -210,22 +214,18 @@ export default {
       camera.position.set(0, 2, 5);
 
       // Load InfoLog Component as Texture
-      const infoLogComponent = createApp(InfoLog);
-      const infoLogContainer = document.createElement('div');
-      document.body.appendChild(infoLogContainer);
-      infoLogComponent.mount(infoLogContainer);
+      this.infoLogComponent = createApp(InfoLog);
+      this.infoLogContainer = document.createElement('div');
+      document.body.appendChild(this.infoLogContainer);
+      this.infoLogComponent.mount(this.infoLogContainer);
 
       await nextTick(); // Wait for Vue to render the component
 
-      const canvas = await html2canvas(infoLogContainer, {
-        backgroundColor: null,
-        scale: 2
-      });
-
-      const infoLogTexture = new THREE.CanvasTexture(canvas);
+      const canvas = await this.createInfoLogCanvas();
+      this.infoLogTexture = new THREE.CanvasTexture(canvas);
       const infoLogAspect = canvas.width / canvas.height;
       const infoLogPlaneGeometry = new THREE.PlaneGeometry(16, 16 / infoLogAspect);
-      const infoLogPlaneMaterial = new THREE.MeshBasicMaterial({ map: infoLogTexture, transparent: true });
+      const infoLogPlaneMaterial = new THREE.MeshBasicMaterial({ map: this.infoLogTexture, transparent: true });
       const infoLogPlane = new THREE.Mesh(infoLogPlaneGeometry, infoLogPlaneMaterial);
 
       // Position InfoLog Plane
@@ -235,6 +235,25 @@ export default {
       this.scene = scene;
       this.camera = camera;
       this.renderer = renderer;
+    },
+    async createInfoLogCanvas() {
+      if (!this.infoLogContainer) {
+        throw new Error('infoLogContainer is not defined');
+      }
+
+      return await html2canvas(this.infoLogContainer, {
+        backgroundColor: null,
+        scale: 2,
+        ignoreElements: (element) => element.tagName === 'CANVAS' && element.hasAttribute('data-engine')
+      });
+    },
+    async updateInfoLogTexture() {
+      const canvas = await this.createInfoLogCanvas();
+      this.infoLogTexture.image = canvas;
+      this.infoLogTexture.needsUpdate = true;
+    },
+    setupPeriodicUpdate() {
+      setInterval(this.updateInfoLogTexture, 5000); // Update every 5 seconds
     },
     async saveObjectsToBackend() {
       try {
