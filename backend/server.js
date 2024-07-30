@@ -31,9 +31,20 @@ db.once('open', () => {
 const objectSchema = new mongoose.Schema({
   type: String,
   data: String,
-  position: Object,
-  rotation: Object,
+  position: {
+    x: Number,
+    y: Number,
+    z: Number,
+  },
+  rotation: {
+    isEuler: Boolean,
+    _x: Number,
+    _y: Number,
+    _z: Number,
+    _order: String,
+  },
   uuid: String,
+  base64: String,
 });
 
 const ObjectModel = mongoose.model('Object', objectSchema);
@@ -78,6 +89,11 @@ app.delete('/objects/:id', async (req, res) => {
     console.error('Error deleting object:', err);
     res.status(500).send({ error: 'Failed to delete object' });
   }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // Start the server
