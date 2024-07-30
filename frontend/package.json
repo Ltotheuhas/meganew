@@ -5,8 +5,7 @@
   "scripts": {
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint",
-    "commit": "node -e \"const execSync = require('child_process').execSync; const readline = require('readline'); const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question('Enter your commit message: ', (message) => { rl.close(); const commands = ['npm run build', 'git add .']; try { execSync('git diff-index --quiet HEAD --'); console.log('No changes to commit.'); } catch (e) { commands.push(`git commit -m \\\"${message}\\\"`); commands.push('git push origin main'); } try { execSync('git worktree remove gh-pages --force', { stdio: 'inherit', shell: true }); } catch (error) { console.log('No existing worktree to remove.'); } commands.push('git worktree add -B gh-pages gh-pages origin/gh-pages'); commands.forEach((cmd) => { try { execSync(cmd, { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute command:', cmd, '\\n', error); process.exit(1); } }); try { execSync('xcopy dist gh-pages /E /H /C /I /Y', { stdio: 'inherit', shell: true }); execSync('cd gh-pages && git add . && git commit -m \\\"Deploy to gh-pages\\\" && git push origin gh-pages', { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute deployment commands:', '\\n', error); process.exit(1); } });\""
+    "lint": "vue-cli-service lint"
   },
   "dependencies": {
     "@vue/cli": "^5.0.8",
