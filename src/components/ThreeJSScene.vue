@@ -42,9 +42,10 @@ export default {
     };
   },
   mounted() {
-    this.initThreeJS();
-    this.loadObjectsFromBackend();
-    this.setupPeriodicUpdate();
+    this.initThreeJS().then(() => {
+      this.loadObjectsFromBackend();
+      this.setupPeriodicUpdate();
+    });
   },
   methods: {
     async initThreeJS() {
@@ -257,12 +258,19 @@ export default {
     },
     async saveObjectsToBackend() {
       try {
+        // Remove _id field from each object to avoid duplicate key error
+        const objectsToSave = this.objects.map(obj => {
+          const objCopy = { ...obj };
+          delete objCopy._id; // Remove the _id field if it exists
+          return objCopy;
+        });
+
         const response = await fetch('http://localhost:3000/objects', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(this.objects),
+          body: JSON.stringify(objectsToSave),
         });
         if (!response.ok) {
           throw new Error('Failed to save objects to backend');
@@ -271,7 +279,8 @@ export default {
       } catch (error) {
         console.error('Error saving objects to backend:', error);
       }
-    },
+    }
+    ,
     async loadObjectsFromBackend() {
       try {
         const response = await fetch('http://localhost:3000/objects');
@@ -279,22 +288,15 @@ export default {
           throw new Error('Failed to load objects from backend');
         }
         const objects = await response.json();
-        this.objects = objects;
-        this.objects.forEach(obj => {
-          switch (obj.type) {
-            case 'image':
-              this.loadImageFromData(obj);
-              break;
-            case 'audio':
-              this.loadAudioFromData(obj);
-              break;
-            case 'model':
-              this.loadModelFromData(obj);
-              break;
-            default:
-              console.warn('Unknown object type:', obj.type);
+        console.log('Loaded objects:', objects);
+
+        for (const obj of objects) {
+          if (obj.type === 'image') {
+            this.loadImageFromData(obj);
+          } else if (obj.type === 'model') {
+            this.loadModelFromData(obj);
           }
-        });
+        }
       } catch (error) {
         console.error('Error loading objects from backend:', error);
       }
@@ -331,16 +333,19 @@ export default {
         console.log(`Detected GIF file, proceeding to load GIF: ${url}`);
         const base64 = await this.blobToBase64(url);
         const plane = await this.loadGIF(base64, this.scene);
-        this.objects.push({
-          type: 'image',
-          base64,  // Save base64 data
-          position: plane.position.clone(),
-          rotation: plane.rotation.clone(),
-          uuid: plane.uuid
-        });
-        await this.saveObjectsToBackend();
+        // Only push and save if it does not already exist
+        if (!this.objects.some(obj => obj.uuid === plane.uuid)) {
+          this.objects.push({
+            type: 'image',
+            base64,
+            position: plane.position.clone(),
+            rotation: plane.rotation.clone(),
+            uuid: plane.uuid
+          });
+          await this.saveObjectsToBackend();
+        }
       } else {
-        console.log(`Loading non-GIF image from URL: ${url}`);
+        // Handle non-GIF images
         textureLoader.load(url, async (texture) => {
           const aspect = texture.image.width / texture.image.height;
           const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
@@ -355,14 +360,17 @@ export default {
           plane.lookAt(this.camera.position);
 
           this.scene.add(plane);
-          this.objects.push({
-            type: 'image',
-            url,
-            position: plane.position.clone(),
-            rotation: plane.rotation.clone(),
-            uuid: plane.uuid
-          });
-          await this.saveObjectsToBackend();
+          // Only push and save if it does not already exist
+          if (!this.objects.some(obj => obj.uuid === plane.uuid)) {
+            this.objects.push({
+              type: 'image',
+              url,
+              position: plane.position.clone(),
+              rotation: plane.rotation.clone(),
+              uuid: plane.uuid
+            });
+            await this.saveObjectsToBackend();
+          }
         });
       }
     },
@@ -400,6 +408,12 @@ export default {
       }
     },
     async loadGIF(base64, scene, position = null, rotation = null) {
+      console.log('loadGIF called with scene:', scene); // Add this line
+
+      if (!scene) {
+        throw new Error('Scene is not defined'); // Add this line
+      }
+
       const arrayBuffer = this.base64ToArrayBuffer(base64);
       const gif = parseGIF(arrayBuffer);
       const frames = decompressFrames(gif, true);
@@ -437,7 +451,7 @@ export default {
         console.log('Calculated rotation to face camera:', plane.rotation);
       }
 
-      scene.add(plane);
+      scene.add(plane); // Ensure scene is defined
 
       let frameIndex = 0;
       const animateGIF = () => {
@@ -488,6 +502,7 @@ export default {
       await this.saveObjectsToBackend();
     },
     getLoader(extension) {
+      console.log(`getLoader called with extension: ${extension}`); // Add logging
       switch (extension) {
         case 'gltf':
         case 'glb':
@@ -526,8 +541,8 @@ export default {
         const base64 = reader.result;
         const modelData = {
           type: 'model',
-          extension,
-          data: base64,
+          extension, // Ensure the extension is correctly set
+          base64, // Use base64 field instead of data
           position: { x: 0, y: 0, z: 0 }, // Initial position placeholder
           rotation: { x: 0, y: 0, z: 0, order: 'XYZ' }, // Initial rotation placeholder
           uuid: THREE.MathUtils.generateUUID()
@@ -567,7 +582,7 @@ export default {
       if (!loader) return;
 
       // Create a blob URL from the base64 data
-      const response = await fetch(obj.data);
+      const response = await fetch(obj.base64);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
 
