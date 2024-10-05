@@ -257,6 +257,7 @@ export default {
       setInterval(this.updateInfoLogTexture, 5000); // Update every 5 seconds
     },
     async saveObjectsToBackend() {
+      const apiUrl = process.env.VUE_APP_API_URL;
       try {
         // Remove _id field from each object to avoid duplicate key error
         const objectsToSave = this.objects.map(obj => {
@@ -265,7 +266,7 @@ export default {
           return objCopy;
         });
 
-        const response = await fetch('http://localhost:3000/objects', {
+        const response = await fetch(`${apiUrl}/objects`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -282,8 +283,9 @@ export default {
     }
     ,
     async loadObjectsFromBackend() {
+      const apiUrl = process.env.VUE_APP_API_URL;
       try {
-        const response = await fetch('http://localhost:3000/objects');
+        const response = await fetch(`${apiUrl}/objects`);
         if (!response.ok) {
           throw new Error('Failed to load objects from backend');
         }
@@ -631,8 +633,9 @@ export default {
           }
 
           // Remove the object from the backend database
+          const apiUrl = process.env.VUE_APP_API_URL;
           try {
-            const response = await fetch(`http://localhost:3000/objects/${obj._id}`, {
+            const response = await fetch(`${apiUrl}/objects/${obj._id}`, {
               method: 'DELETE',
             });
             if (response.ok) {

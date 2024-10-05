@@ -37,7 +37,8 @@ export default {
     async checkBackendStatus() {
       try {
         console.log('Checking backend status...');
-        const response = await fetch('http://localhost:3000/health');
+        const apiUrl = process.env.VUE_APP_API_URL;
+        const response = await fetch(`${apiUrl}/health`);
         console.log('Response:', response);
         if (response.ok) {
           console.log('Backend is online');
