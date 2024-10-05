@@ -6,7 +6,8 @@
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
-    "commit": "node -e \"const execSync = require('child_process').execSync; const readline = require('readline'); const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question('Enter your commit message: ', (message) => { rl.close(); const commands = ['npm run build', 'git add .', 'git diff-index --quiet HEAD || git commit -m \\\"' + message + '\\\"', 'git push origin main', 'git subtree split --prefix dist -b gh-pages-temp', 'git push origin gh-pages-temp:gh-pages', 'git branch -D gh-pages-temp']; commands.forEach((cmd) => { try { execSync(cmd, { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute command:', cmd, '\\n', error); process.exit(1); } }); });\""
+    "commit": "node -e \"const execSync = require('child_process').execSync; const readline = require('readline'); const rl = readline.createInterface({ input: process.stdin, output: process.stdout }); rl.question('Enter your commit message: ', (message) => { rl.close(); const commands = ['npm run build', 'git add .', 'git diff-index --quiet HEAD || git commit -m \\\"' + message + '\\\"', 'git push origin main', 'npm run deploy']; commands.forEach((cmd) => { try { execSync(cmd, { stdio: 'inherit', shell: true }); } catch (error) { console.error('Failed to execute command:', cmd, '\\n', error); process.exit(1); } }); });\"",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@vue/cli": "^5.0.8",
@@ -24,7 +25,8 @@
     "@vue/cli-plugin-eslint": "~5.0.0",
     "@vue/cli-service": "~5.0.0",
     "eslint": "^7.32.0",
-    "eslint-plugin-vue": "^8.0.3"
+    "eslint-plugin-vue": "^8.0.3",
+    "gh-pages": "^6.1.1"
   },
   "eslintConfig": {
     "root": true,
