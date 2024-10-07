@@ -52,48 +52,72 @@ export default {
           break;
       }
     },
-    handleUpload(file) {
-      const fileSizeLimit = 10 * 1024 * 1024;
+    async handleUpload(file) {
+      const fileSizeLimit = 10 * 1024 * 1024; // 10MB limit
 
       if (file.size > fileSizeLimit) {
         alert('File size exceeds the limit of ' + fileSizeLimit / 1024 / 1024 + 'MB.');
         return;
       }
 
-      const url = URL.createObjectURL(file);
-      const extension = file.name.split('.').pop().toLowerCase();
+      // Prepare the file for upload
+      const formData = new FormData();
+      formData.append('file', file);
 
-      switch (extension) {
-        case 'jpg':
-        case 'jpeg':
-        case 'png':
-        case 'gif':
-          this.$refs.threeScene.addImage(url);
-          break;
-        case 'mp3':
-        case 'wav':
-          this.$refs.threeScene.addAudio(url);
-          break;
-        case 'gltf':
-        case 'glb':
-        case 'obj':
-        case 'fbx':
-        case 'stl':
-        case 'dae':
-        case '3ds':
-        case 'ply':
-        case 'x3d':
-        case 'wrl':
-          this.$refs.threeScene.addModel(url, extension);
-          break;
-        default:
-          console.error('Unsupported file type');
-      }
+      try {
+        // Upload the file to the backend
+        const apiUrl = process.env.VUE_APP_API_URL; // Your backend URL
+        const response = await fetch(`${apiUrl}/upload`, {
+          method: 'POST',
+          body: formData,
+        });
 
-      // Close the upload menu and lock the mouse into camera mode
-      this.showUploadMenu = false;
-      if (this.$refs.threeScene.controls) {
-        this.$refs.threeScene.controls.lock();
+        if (!response.ok) {
+          throw new Error('Failed to upload file');
+        }
+
+        const result = await response.json();
+        const filePath = result.filePath; // Get the file path from the server response
+
+        // Determine the file extension
+        const extension = file.name.split('.').pop().toLowerCase();
+
+        // Call the appropriate method to add the object to the scene
+        switch (extension) {
+          case 'jpg':
+          case 'jpeg':
+          case 'png':
+          case 'gif':
+            this.$refs.threeScene.addImage(filePath); // Pass the server file path to addImage
+            break;
+          case 'mp3':
+          case 'wav':
+            this.$refs.threeScene.addAudio(filePath);
+            break;
+          case 'gltf':
+          case 'glb':
+          case 'obj':
+          case 'fbx':
+          case 'stl':
+          case 'dae':
+          case '3ds':
+          case 'ply':
+          case 'x3d':
+          case 'wrl':
+            this.$refs.threeScene.addModel(filePath, extension);
+            break;
+          default:
+            console.error('Unsupported file type');
+        }
+
+        // Close the upload menu and lock the mouse back into camera mode
+        this.showUploadMenu = false;
+        if (this.$refs.threeScene.controls) {
+          this.$refs.threeScene.controls.lock();
+        }
+
+      } catch (error) {
+        console.error('Error uploading file:', error);
       }
     },
   },

@@ -259,46 +259,52 @@ export default {
     async saveObjectsToBackend() {
       const apiUrl = process.env.VUE_APP_API_URL;
       try {
-        // Remove _id field from each object to avoid duplicate key error
-        const objectsToSave = this.objects.map(obj => {
-          const objCopy = { ...obj };
-          delete objCopy._id; // Remove the _id field if it exists
-          return objCopy;
-        });
+        // Assuming `this.objects` contains only one object that represents the image metadata
+        if (this.objects.length > 0) {
+          const objectToSave = this.objects[0]; // Get the first object if it's an array
 
-        const response = await fetch(`${apiUrl}/objects`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(objectsToSave),
-        });
-        if (!response.ok) {
-          throw new Error('Failed to save objects to backend');
+          const response = await fetch(`${apiUrl}/objects`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(objectToSave), // Send only a single object
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to save object to backend');
+          }
+
+          console.log('Object saved to backend successfully');
+        } else {
+          console.warn("No object available to save.");
         }
-        console.log('Objects saved to backend successfully');
       } catch (error) {
-        console.error('Error saving objects to backend:', error);
+        console.error('Error saving object to backend:', error);
       }
-    }
-    ,
+    },
     async loadObjectsFromBackend() {
       const apiUrl = process.env.VUE_APP_API_URL;
       try {
         const response = await fetch(`${apiUrl}/objects`);
+
         if (!response.ok) {
+          console.error('Error status:', response.status, response.statusText);
           throw new Error('Failed to load objects from backend');
         }
+
         const objects = await response.json();
         console.log('Loaded objects:', objects);
 
-        for (const obj of objects) {
+        const objectPromises = objects.map(obj => {
           if (obj.type === 'image') {
-            this.loadImageFromData(obj);
+            return this.loadImageFromData(obj);
           } else if (obj.type === 'model') {
-            this.loadModelFromData(obj);
+            return this.loadModelFromData(obj);
           }
-        }
+        });
+        await Promise.all(objectPromises);
+
       } catch (error) {
         console.error('Error loading objects from backend:', error);
       }
@@ -323,60 +329,78 @@ export default {
       const blob = await response.blob();
       return blob.type.split('/')[1]; // Get the extension part
     },
-    async addImage(url) {
-      console.log(`addImage called with URL: ${url}`);
-
-      const extension = await this.getFileTypeFromBlobUrl(url);
-      console.log(`Detected file type: ${extension}`);
-
+    async addImage(filePath) {
       const textureLoader = new THREE.TextureLoader();
 
-      if (extension === 'gif') {
-        console.log(`Detected GIF file, proceeding to load GIF: ${url}`);
-        const base64 = await this.blobToBase64(url);
-        const plane = await this.loadGIF(base64, this.scene);
-        // Only push and save if it does not already exist
-        if (!this.objects.some(obj => obj.uuid === plane.uuid)) {
+      // Use the filePath to load the image texture from the server
+      textureLoader.load(
+        `${process.env.VUE_APP_API_URL}${filePath}`, // Ensure your API URL is correctly set
+        async (texture) => {
+          // Calculate the aspect ratio of the image
+          const aspect = texture.image.width / texture.image.height;
+          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect); // Adjust dimensions based on aspect ratio
+          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+          const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+          // Position the plane in front of the camera
+          const distance = 5; // Adjust as needed for your scene
+          const vector = new THREE.Vector3(0, 0, -distance);
+          vector.applyQuaternion(this.camera.quaternion);
+          plane.position.copy(this.camera.position).add(vector);
+          plane.lookAt(this.camera.position); // Make sure it faces the camera
+
+          // Add the plane to the scene
+          this.scene.add(plane);
+
+          // Store information about the plane so you can manage it later
           this.objects.push({
             type: 'image',
-            base64,
+            filePath, // Store the server path for future reference
             position: plane.position.clone(),
             rotation: plane.rotation.clone(),
             uuid: plane.uuid
           });
+
+          // Save the updated objects list to the backend
           await this.saveObjectsToBackend();
+        },
+        undefined,
+        (err) => {
+          console.error('Error loading texture:', err); // Handle any loading errors
         }
-      } else {
-        // Handle non-GIF images
-        textureLoader.load(url, async (texture) => {
-          const aspect = texture.image.width / texture.image.height;
-          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-          const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-
-          const distance = 5;
-          const vector = new THREE.Vector3(0, 0, -distance);
-          vector.applyQuaternion(this.camera.quaternion);
-          plane.position.copy(this.camera.position).add(vector);
-
-          plane.lookAt(this.camera.position);
-
-          this.scene.add(plane);
-          // Only push and save if it does not already exist
-          if (!this.objects.some(obj => obj.uuid === plane.uuid)) {
-            this.objects.push({
-              type: 'image',
-              url,
-              position: plane.position.clone(),
-              rotation: plane.rotation.clone(),
-              uuid: plane.uuid
-            });
-            await this.saveObjectsToBackend();
-          }
-        });
-      }
+      );
     },
-    async blobToBase64(blobUrl) {
+    createImagePlane(filePath) {
+      const textureLoader = new THREE.TextureLoader();
+
+      return new Promise((resolve, reject) => {
+        textureLoader.load(
+          `${process.env.VUE_APP_API_URL}${filePath}`,
+          (texture) => {
+            const aspect = texture.image.width / texture.image.height;
+            const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
+            const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+            // Position plane in front of the camera
+            const distance = 5;
+            const vector = new THREE.Vector3(0, 0, -distance);
+            vector.applyQuaternion(this.camera.quaternion);
+            plane.position.copy(this.camera.position).add(vector);
+            plane.lookAt(this.camera.position);
+
+            resolve(plane);
+          },
+          undefined,
+          (error) => {
+            console.error('Error loading texture:', error);
+            reject(error);
+          }
+        );
+      });
+    },
+    async blobToBase64(blobUrl) { // 2 remove
       const response = await fetch(blobUrl);
       const blob = await response.blob();
       return new Promise((resolve, reject) => {
@@ -388,26 +412,61 @@ export default {
     },
     loadImageFromData(obj) {
       const textureLoader = new THREE.TextureLoader();
-
       console.log('Loading image from data:', obj);
 
-      if (obj.base64) {
-        this.loadGIF(obj.base64, this.scene, obj.position, obj.rotation);
-      } else if (obj.url) {
-        textureLoader.load(obj.url, (texture) => {
-          const aspect = texture.image.width / texture.image.height;
-          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-          const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-          plane.position.copy(obj.position);
-          plane.rotation.copy(obj.rotation);
-          this.scene.add(plane);
-        }, undefined, (err) => {
-          console.error('Error loading texture:', err);
-        });
+      if (obj.filePath) {
+        textureLoader.load(
+          `${process.env.VUE_APP_API_URL}${obj.filePath}`,
+          (texture) => {
+            // Check if texture image is loaded properly
+            if (texture.image && texture.image.width && texture.image.height) {
+              const aspect = texture.image.width / texture.image.height;
+              const scale = obj.scale || 2; // Optionally use 'scale' property from obj, default to 2
+
+              // Create plane geometry and material using the texture
+              const planeGeometry = new THREE.PlaneGeometry(scale, scale / aspect);
+              const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+
+              // Create and configure the plane mesh
+              const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+              plane.position.copy(obj.position || new THREE.Vector3(0, 0, 0)); // Default position if not set
+              plane.rotation.copy(obj.rotation || new THREE.Euler(0, 0, 0)); // Default rotation if not set
+
+              this.scene.add(plane); // Add the plane to the scene
+
+              // Save the object reference for future cleanup
+              this.objects.push(plane);
+
+              console.log(`Image ${obj.filePath} loaded and added to the scene.`);
+            } else {
+              console.error('Texture image dimensions unavailable for:', obj.filePath);
+            }
+          },
+          undefined,
+          (err) => {
+            console.error(`Error loading texture from ${obj.filePath}:`, err);
+          }
+        );
       } else {
-        console.error('No URL or base64 data found for image:', obj);
+        console.error('No file path found for image object:', obj);
       }
+    },
+
+    // Optional cleanup method to remove all loaded images
+    clearImageObjects() {
+      this.objects.forEach((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((mat) => mat.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+        this.scene.remove(obj); // Remove from scene
+      });
+      this.objects = []; // Clear reference array
+      console.log('All image objects have been removed from the scene and cleaned up.');
     },
     async loadGIF(base64, scene, position = null, rotation = null) {
       console.log('loadGIF called with scene:', scene); // Add this line
