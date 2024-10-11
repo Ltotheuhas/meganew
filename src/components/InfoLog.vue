@@ -7,13 +7,10 @@
     </div>
     <div v-else>
       <p>Press B to upload a file</p>
-      <p>Press C to clear all objects</p>
+      <!--<p>Press C to clear all objects</p>-->
       <p>Use WASD or arrow keys to move around</p>
       <p>Phone controls may or may not work rn</p>
-      <p>Currently supports image files and obj files</p>
-      <p>EVEN GIFS WORK WHICH WAS WAY MORE FUCKING WORK THAN EXPECTED</p>
-      <p>Objects SHOULD BE saved to local storage so they reappear even when refreshed</p>
-      <p>But thats broken rn</p>
+      <p>Currently only supports image files</p>
     </div>
   </div>
 </template>
