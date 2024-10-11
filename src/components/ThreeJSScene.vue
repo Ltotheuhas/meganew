@@ -256,29 +256,24 @@ export default {
     setupPeriodicUpdate() {
       setInterval(this.updateInfoLogTexture, 5000); // Update every 5 seconds
     },
-    async saveObjectsToBackend() {
+    async saveObjectsToBackend(objectToSave) {
       const apiUrl = process.env.VUE_APP_API_URL;
       try {
-        // Assuming `this.objects` contains only one object that represents the image metadata
-        if (this.objects.length > 0) {
-          const objectToSave = this.objects[0]; // Get the first object if it's an array
+        console.log("saveObjectsToBackend - Saving object:", objectToSave); // Debug log for object data
 
-          const response = await fetch(`${apiUrl}/objects`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(objectToSave), // Send only a single object
-          });
+        const response = await fetch(`${apiUrl}/objects`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(objectToSave),
+        });
 
-          if (!response.ok) {
-            throw new Error('Failed to save object to backend');
-          }
-
-          console.log('Object saved to backend successfully');
-        } else {
-          console.warn("No object available to save.");
+        if (!response.ok) {
+          throw new Error('Failed to save object to backend');
         }
+
+        console.log('Object saved to backend successfully');
       } catch (error) {
         console.error('Error saving object to backend:', error);
       }
@@ -332,6 +327,8 @@ export default {
     async addImage(filePath) {
       const textureLoader = new THREE.TextureLoader();
 
+      console.log("addImage - filePath received:", filePath);
+
       // Use the filePath to load the image texture from the server
       textureLoader.load(
         `${process.env.VUE_APP_API_URL}${filePath}`, // Ensure your API URL is correctly set
@@ -352,17 +349,20 @@ export default {
           // Add the plane to the scene
           this.scene.add(plane);
 
-          // Store information about the plane so you can manage it later
-          this.objects.push({
+          // Push the object with the correct structure
+          const objectToSave = {
             type: 'image',
-            filePath, // Store the server path for future reference
+            filePath: filePath, // Ensure the filePath is assigned here
             position: plane.position.clone(),
             rotation: plane.rotation.clone(),
             uuid: plane.uuid
-          });
+          };
+
+          console.log("Adding object to scene and saving:", objectToSave);
+          this.objects.push(objectToSave);
 
           // Save the updated objects list to the backend
-          await this.saveObjectsToBackend();
+          await this.saveObjectsToBackend(objectToSave);
         },
         undefined,
         (err) => {

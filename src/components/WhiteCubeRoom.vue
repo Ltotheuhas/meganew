@@ -77,6 +77,7 @@ export default {
         }
 
         const result = await response.json();
+        console.log("Upload result:", result);
         const filePath = result.filePath; // Get the file path from the server response
 
         // Determine the file extension
