@@ -45,9 +45,6 @@ export default {
         case 'b':
           this.toggleUploadMenu();
           break;
-        case 'c':
-          this.$refs.threeScene.clearObjects();
-          break;
         default:
           break;
       }
@@ -88,8 +85,10 @@ export default {
           case 'jpg':
           case 'jpeg':
           case 'png':
-          case 'gif':
             this.$refs.threeScene.addImage(filePath); // Pass the server file path to addImage
+            break;
+          case 'gif':
+            this.$refs.threeScene.addGIF(filePath);
             break;
           case 'mp3':
           case 'wav':

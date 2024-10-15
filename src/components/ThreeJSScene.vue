@@ -71,7 +71,7 @@ export default {
       scene.add(axesHelper);
 
       // White Cube Room
-      const geometry = new THREE.BoxGeometry(100, 100, 100);
+      const geometry = new THREE.BoxGeometry(1000, 1000, 1000);
       const material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
       const cube = new THREE.Mesh(geometry, material);
       scene.add(cube);
@@ -294,6 +294,8 @@ export default {
         const objectPromises = objects.map(obj => {
           if (obj.type === 'image') {
             return this.loadImageFromData(obj);
+          } else if (obj.type === 'gif') {
+            return this.loadGIFFromData(obj);
           } else if (obj.type === 'model') {
             return this.loadModelFromData(obj);
           }
@@ -303,26 +305,6 @@ export default {
       } catch (error) {
         console.error('Error loading objects from backend:', error);
       }
-    },
-    loadObject(obj) {
-      switch (obj.type) {
-        case 'image':
-          this.loadImageFromData(obj);
-          break;
-        case 'audio':
-          this.loadAudioFromData(obj);
-          break;
-        case 'model':
-          this.loadModelFromData(obj);
-          break;
-        default:
-          console.warn('Unknown object type:', obj.type);
-      }
-    },
-    async getFileTypeFromBlobUrl(blobUrl) {
-      const response = await fetch(blobUrl);
-      const blob = await response.blob();
-      return blob.type.split('/')[1]; // Get the extension part
     },
     async addImage(filePath) {
       const textureLoader = new THREE.TextureLoader();
@@ -336,7 +318,11 @@ export default {
           // Calculate the aspect ratio of the image
           const aspect = texture.image.width / texture.image.height;
           const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect); // Adjust dimensions based on aspect ratio
-          const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+          const planeMaterial = new THREE.MeshBasicMaterial({
+            map: texture,
+            side: THREE.DoubleSide,
+            transparent: true // Enable transparency
+          });
           const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
           // Position the plane in front of the camera
@@ -370,44 +356,152 @@ export default {
         }
       );
     },
-    createImagePlane(filePath) {
-      const textureLoader = new THREE.TextureLoader();
+    async addGIF(filePath) {
+      console.log("addGIF - filePath received:", filePath);
 
-      return new Promise((resolve, reject) => {
-        textureLoader.load(
+      // Fetch the GIF file from the server
+      const response = await fetch(`${process.env.VUE_APP_API_URL}${filePath}`);
+      const arrayBuffer = await response.arrayBuffer();
+
+      // Parse and decompress GIF frames (assuming `parseGIF` and `decompressFrames` functions are available)
+      const gif = parseGIF(arrayBuffer);
+      const frames = decompressFrames(gif, true);
+
+      // Set up canvas for rendering GIF frames
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.width = frames[0].dims.width;
+      canvas.height = frames[0].dims.height;
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      const aspect = canvas.width / canvas.height;
+      const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
+      const planeMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        transparent: true // Enable transparency
+      });
+      const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+      // Position the plane in front of the camera
+      const distance = 5;
+      const vector = new THREE.Vector3(0, 0, -distance);
+      vector.applyQuaternion(this.camera.quaternion);
+      plane.position.copy(this.camera.position).add(vector);
+      plane.lookAt(this.camera.position);
+
+      this.scene.add(plane);
+      console.log("Plane added to the scene with GIF texture.");
+
+      // Animate the GIF frames
+      let frameIndex = 0;
+      const animateGIF = () => {
+        const frame = frames[frameIndex];
+        context.putImageData(
+          new ImageData(new Uint8ClampedArray(frame.patch), frame.dims.width, frame.dims.height),
+          frame.dims.left,
+          frame.dims.top
+        );
+        texture.needsUpdate = true;
+
+        // Move to the next frame or loop back to the start
+        frameIndex = (frameIndex + 1) % frames.length;
+
+        const delayIsInMilliseconds = frame.delay < 10 ? false : true;
+        const frameDelay = delayIsInMilliseconds ? frame.delay : frame.delay * 10;
+
+        setTimeout(animateGIF, frameDelay); // Use delay for frame rate control
+      };
+      animateGIF();
+
+      // Save the object with the correct structure to the backend
+      const objectToSave = {
+        type: 'gif',
+        filePath: filePath,
+        position: plane.position.clone(),
+        rotation: plane.rotation.clone(),
+        uuid: plane.uuid
+      };
+
+      console.log("Saving GIF object to backend:", objectToSave);
+      this.objects.push(objectToSave);
+      await this.saveObjectsToBackend(objectToSave);
+    },
+    async addModel(filePath, extension) {
+      const loader = this.getLoader(extension);
+      if (!loader) {
+        console.error(`Unsupported model file type: ${extension}`);
+        return;
+      }
+
+      console.log("addModel - filePath received:", filePath); // Debugging log
+
+      // Load the model directly from the server file path
+      const modelData = {
+        type: 'model',
+        extension,
+        filePath,
+        position: { x: 0, y: 0, z: 0 }, // Initial position placeholder
+        rotation: { x: 0, y: 0, z: 0, order: 'XYZ' }, // Initial rotation placeholder
+        uuid: THREE.MathUtils.generateUUID()
+      };
+
+      return new Promise((resolve) => {
+        loader.load(
           `${process.env.VUE_APP_API_URL}${filePath}`,
-          (texture) => {
-            const aspect = texture.image.width / texture.image.height;
-            const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-            const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+          (model) => {
+            // Determine whether model is a scene (e.g., GLTF) or directly usable object
+            let sceneObject = model.scene || model;
 
-            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            // Calculate the bounding box and limit the height
+            const boundingBox = new THREE.Box3().setFromObject(sceneObject);
+            const modelHeight = boundingBox.max.y - boundingBox.min.y;
+            const maxHeight = 5; // Set your desired maximum height here
 
-            // Position plane in front of the camera
-            const distance = 5;
+            console.log("Calculated model height:", modelHeight);
+
+            // Scale down if the model's height exceeds maxHeight
+            if (modelHeight > maxHeight) {
+              const scale = maxHeight / modelHeight;
+              sceneObject.scale.set(scale, scale, scale);
+              console.log(`Model scaled by factor of ${scale} to fit within max height of ${maxHeight}`);
+            }
+
+            // Position the model in front of the camera
+            const distance = 5; // Distance in front of the camera
             const vector = new THREE.Vector3(0, 0, -distance);
             vector.applyQuaternion(this.camera.quaternion);
-            plane.position.copy(this.camera.position).add(vector);
-            plane.lookAt(this.camera.position);
+            sceneObject.position.copy(this.camera.position).add(vector);
+            sceneObject.position.y = 0; // Set y position to ground level
 
-            resolve(plane);
+            // Rotate the model to face the camera along the Z-axis
+            const cameraDirection = new THREE.Vector3();
+            this.camera.getWorldDirection(cameraDirection);
+            cameraDirection.y = 0; // Zero out the Y component to align horizontally
+            cameraDirection.normalize();
+            const targetPosition = sceneObject.position.clone().add(cameraDirection);
+            sceneObject.lookAt(targetPosition);
+            sceneObject.rotation.x = 0; // Ensure no tilt in the X-axis
+            sceneObject.rotation.z = 0; // Ensure no tilt in the Z-axis
+
+            // Update the model data with the final position and rotation
+            modelData.position = sceneObject.position.clone();
+            modelData.rotation = sceneObject.rotation.clone();
+
+            this.scene.add(sceneObject); // Add the model to the scene
+            this.objects.push(modelData); // Save reference to the model
+
+            this.saveObjectsToBackend(modelData).then(() => {
+              resolve(sceneObject); // Resolve the promise
+            });
           },
           undefined,
-          (error) => {
-            console.error('Error loading texture:', error);
-            reject(error);
+          (err) => {
+            console.error('Error loading model:', err); // Handle any loading errors
+            resolve(null); // Resolve with null if there's an error
           }
         );
-      });
-    },
-    async blobToBase64(blobUrl) { // 2 remove
-      const response = await fetch(blobUrl);
-      const blob = await response.blob();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
       });
     },
     loadImageFromData(obj) {
@@ -425,7 +519,11 @@ export default {
 
               // Create plane geometry and material using the texture
               const planeGeometry = new THREE.PlaneGeometry(scale, scale / aspect);
-              const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+              const planeMaterial = new THREE.MeshBasicMaterial({
+                map: texture,
+                side: THREE.DoubleSide,
+                transparent: true // Enable transparency
+              });
 
               // Create and configure the plane mesh
               const plane = new THREE.Mesh(planeGeometry, planeMaterial);
@@ -451,34 +549,15 @@ export default {
         console.error('No file path found for image object:', obj);
       }
     },
+    async loadGIFFromData(obj) {
+      console.log('Loading GIF from data:', obj);
 
-    // Optional cleanup method to remove all loaded images
-    clearImageObjects() {
-      this.objects.forEach((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((mat) => mat.dispose());
-          } else {
-            obj.material.dispose();
-          }
-        }
-        this.scene.remove(obj); // Remove from scene
-      });
-      this.objects = []; // Clear reference array
-      console.log('All image objects have been removed from the scene and cleaned up.');
-    },
-    async loadGIF(base64, scene, position = null, rotation = null) {
-      console.log('loadGIF called with scene:', scene); // Add this line
-
-      if (!scene) {
-        throw new Error('Scene is not defined'); // Add this line
-      }
-
-      const arrayBuffer = this.base64ToArrayBuffer(base64);
+      const response = await fetch(`${process.env.VUE_APP_API_URL}${obj.filePath}`);
+      const arrayBuffer = await response.arrayBuffer();
       const gif = parseGIF(arrayBuffer);
       const frames = decompressFrames(gif, true);
 
+      // Create a canvas for rendering the GIF
       const canvas = document.createElement('canvas');
       canvas.width = frames[0].dims.width;
       canvas.height = frames[0].dims.height;
@@ -487,84 +566,102 @@ export default {
       const texture = new THREE.CanvasTexture(canvas);
       const aspect = canvas.width / canvas.height;
       const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
-      const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+      const planeMaterial = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        transparent: true // Enable transparency
+      });
       const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
-      console.log('Initial plane position:', plane.position);
-      console.log('Initial plane rotation:', plane.rotation);
+      // Set position and rotation based on the object data
+      plane.position.copy(obj.position || new THREE.Vector3(0, 0, 0));
+      plane.rotation.copy(obj.rotation || new THREE.Euler(0, 0, 0));
 
-      if (position) {
-        plane.position.copy(position);
-        console.log('Loaded position:', position);
-      } else {
-        const distance = 5; // Distance in front of the camera
-        const vector = new THREE.Vector3(0, 0, -distance);
-        vector.applyQuaternion(this.camera.quaternion);
-        plane.position.copy(this.camera.position).add(vector);
-        console.log('Calculated position in front of camera:', plane.position);
-      }
+      this.scene.add(plane);
+      this.objects.push(plane);
 
-      if (rotation) {
-        plane.rotation.copy(rotation);
-        console.log('Loaded rotation:', rotation);
-      } else {
-        plane.lookAt(this.camera.position);
-        console.log('Calculated rotation to face camera:', plane.rotation);
-      }
-
-      scene.add(plane); // Ensure scene is defined
-
+      // Animate the GIF frames
       let frameIndex = 0;
+
       const animateGIF = () => {
-        requestAnimationFrame(animateGIF);
+        // Check for the delay of the current frame
         const frame = frames[frameIndex];
-        ctx.putImageData(new ImageData(new Uint8ClampedArray(frame.patch), frame.dims.width, frame.dims.height), frame.dims.left, frame.dims.top);
+        const delayIsInMilliseconds = frame.delay < 10 ? false : true;
+        const frameDelay = delayIsInMilliseconds ? frame.delay : frame.delay * 10;
+
+        ctx.putImageData(
+          new ImageData(
+            new Uint8ClampedArray(frame.patch),
+            frame.dims.width,
+            frame.dims.height
+          ),
+          frame.dims.left,
+          frame.dims.top
+        );
         texture.needsUpdate = true;
+
         frameIndex = (frameIndex + 1) % frames.length;
+        setTimeout(() => {
+          requestAnimationFrame(animateGIF);
+        }, frameDelay);
       };
+
       animateGIF();
 
-      this.objects.push({ type: 'image', base64, position: plane.position.clone(), rotation: plane.rotation.clone(), uuid: plane.uuid });
-      await this.saveObjectsToBackend();
-
-      return plane;
+      console.log(`GIF ${obj.filePath} loaded and added to the scene.`);
     },
-    base64ToArrayBuffer(base64) {
-      const binaryString = window.atob(base64.split(',')[1]);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+    async loadModelFromData(obj) {
+      console.log('Loading model from data:', obj); // Debugging log
+
+      // Extract the file extension from the filePath
+      const filePath = obj.filePath;
+      const extension = filePath.split('.').pop().toLowerCase(); // Extract extension after last dot
+
+      const loader = this.getLoader(extension);
+      if (!loader) {
+        console.error(`No loader available for extension: ${extension}`);
+        return;
       }
-      return bytes.buffer;
-    },
-    renderFrame() {
-      const frame = this.frames[this.frameIndex];
-      const { dims, patch } = frame;
-      this.ctx.putImageData(new ImageData(new Uint8ClampedArray(patch), dims.width, dims.height), dims.left, dims.top);
 
-      this.frameIndex = (this.frameIndex + 1) % this.frames.length;
-    },
-    async addAudio(url) {
-      const audio = new Audio(url);
-      const buttonGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const buttonMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-      const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
+      const url = `${process.env.VUE_APP_API_URL}${obj.filePath}`;
 
-      // Calculate the position in front of the camera
-      const distance = 5; // Distance in front of the camera
-      const vector = new THREE.Vector3(0, 0, -distance);
-      vector.applyQuaternion(this.camera.quaternion);
-      button.position.copy(this.camera.position).add(vector);
+      return new Promise((resolve, reject) => {
+        loader.load(
+          url,
+          (gltf) => {
+            let sceneObject = gltf.scene ? gltf.scene : gltf;
 
-      button.userData = { onClick: () => audio.play() };
-      this.scene.add(button);
-      this.objects.push({ type: 'audio', url, position: button.position.clone(), uuid: button.uuid });
-      await this.saveObjectsToBackend();
+            // Set position and rotation
+            sceneObject.position.set(obj.position.x, obj.position.y, obj.position.z);
+            sceneObject.rotation.set(obj.rotation._x, obj.rotation._y, obj.rotation._z, obj.rotation._order);
+            sceneObject.uuid = obj.uuid;
+
+            // Calculate bounding box and limit the height
+            const boundingBox = new THREE.Box3().setFromObject(sceneObject);
+            const modelHeight = boundingBox.max.y - boundingBox.min.y;
+            const maxHeight = 5; // Set your desired maximum height here
+
+            // Scale down if the model's height exceeds maxHeight
+            if (modelHeight > maxHeight) {
+              const scale = maxHeight / modelHeight;
+              sceneObject.scale.set(scale, scale, scale);
+            }
+
+            this.scene.add(sceneObject);
+            resolve(sceneObject);
+          },
+          undefined,
+          (error) => {
+            console.error('Error loading model:', error);
+            reject(error);
+          }
+        );
+        console.log(`Model ${obj.filePath} loaded and added to the scene.`);
+      });
     },
     getLoader(extension) {
       console.log(`getLoader called with extension: ${extension}`); // Add logging
-      switch (extension) {
+      switch (extension.toLowerCase()) {
         case 'gltf':
         case 'glb':
           return new GLTFLoader();
@@ -585,135 +682,9 @@ export default {
         case 'wrl':
           return new VRMLLoader();
         default:
-          console.error('Unsupported model file type');
+          console.error(`Unsupported model file type: ${extension}`);
           return null;
       }
-    },
-    async addModel(url, extension) {
-      const loader = this.getLoader(extension);
-      if (!loader) return;
-
-      // Fetch the model blob and convert it to base64
-      const response = await fetch(url);
-      const blob = await response.blob();
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onloadend = async () => {
-        const base64 = reader.result;
-        const modelData = {
-          type: 'model',
-          extension, // Ensure the extension is correctly set
-          base64, // Use base64 field instead of data
-          position: { x: 0, y: 0, z: 0 }, // Initial position placeholder
-          rotation: { x: 0, y: 0, z: 0, order: 'XYZ' }, // Initial rotation placeholder
-          uuid: THREE.MathUtils.generateUUID()
-        };
-
-        // Load the model and get its final position and rotation
-        const sceneObject = await this.loadModelFromData(modelData);
-
-        // Calculate the position in front of the camera
-        const distance = 5; // Distance in front of the camera
-        const vector = new THREE.Vector3(0, 0, -distance);
-        vector.applyQuaternion(this.camera.quaternion);
-        sceneObject.position.copy(this.camera.position).add(vector);
-        sceneObject.position.y = 0; // Set y position to ground level
-
-        // Rotate the model to face the camera along the Z-axis
-        const cameraDirection = new THREE.Vector3();
-        this.camera.getWorldDirection(cameraDirection);
-        cameraDirection.y = 0; // Zero out the Y component to align horizontally
-        cameraDirection.normalize();
-        const targetPosition = sceneObject.position.clone().add(cameraDirection);
-        sceneObject.lookAt(targetPosition);
-        sceneObject.rotation.x = 0; // Ensure no tilt in the X-axis
-        sceneObject.rotation.z = 0; // Ensure no tilt in the Z-axis
-
-        // Update the model data with the final position and rotation
-        modelData.position = sceneObject.position.clone();
-        modelData.rotation = sceneObject.rotation.clone();
-
-        this.objects.push(modelData);
-        await this.saveObjectsToBackend();
-      };
-    },
-    async loadModelFromData(obj) {
-      console.log('Loading model from data:', obj); // Debugging log
-      const loader = this.getLoader(obj.extension);
-      if (!loader) return;
-
-      // Create a blob URL from the base64 data
-      const response = await fetch(obj.base64);
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-
-      return new Promise((resolve) => {
-        loader.load(url, (gltf) => {
-          let sceneObject;
-          if (gltf.scene) {
-            sceneObject = gltf.scene;
-          } else {
-            sceneObject = gltf;
-          }
-
-          // Set position and rotation
-          sceneObject.position.set(obj.position.x, obj.position.y, obj.position.z);
-          sceneObject.rotation.set(obj.rotation._x, obj.rotation._y, obj.rotation._z, obj.rotation._order);
-
-          sceneObject.uuid = obj.uuid; // Assign the saved UUID
-
-          this.scene.add(sceneObject);
-          resolve(sceneObject); // Resolve with the scene object
-        });
-      });
-    },
-    clearObjects() {
-      console.log('Clearing all objects from the scene and local storage.'); // Debugging log
-
-      // Iterate through the objects array
-      this.objects.forEach(async obj => {
-        if (obj && obj.uuid) { // Check if the object and its UUID are valid
-          const threeObject = this.scene.getObjectByProperty('uuid', obj.uuid);
-          if (threeObject) {
-            this.scene.remove(threeObject);
-            console.log(`Removed object with UUID: ${obj.uuid}`); // Debugging log
-
-            // Dispose of the object's geometry and material to free up memory
-            if (threeObject.geometry) threeObject.geometry.dispose();
-            if (threeObject.material) {
-              if (Array.isArray(threeObject.material)) {
-                threeObject.material.forEach(material => material.dispose());
-              } else {
-                threeObject.material.dispose();
-              }
-            }
-          } else {
-            console.warn(`Object with UUID: ${obj.uuid} not found in the scene.`); // Debugging log
-          }
-
-          // Remove the object from the backend database
-          const apiUrl = process.env.VUE_APP_API_URL;
-          try {
-            const response = await fetch(`${apiUrl}/objects/${obj._id}`, {
-              method: 'DELETE',
-            });
-            if (response.ok) {
-              console.log(`Object with ID: ${obj._id} removed from database.`); // Debugging log
-            } else {
-              console.error(`Failed to remove object with ID: ${obj._id} from database.`); // Debugging log
-            }
-          } catch (error) {
-            console.error(`Error removing object with ID: ${obj._id} from database:`, error); // Debugging log
-          }
-        } else {
-          console.warn('Encountered invalid object or object without UUID:', obj); // Debugging log
-        }
-      });
-
-      // Clear the objects array
-      this.objects = [];
-
-      console.log('All objects have been cleared.'); // Debugging log
     }
   },
   beforeUnmount() {
