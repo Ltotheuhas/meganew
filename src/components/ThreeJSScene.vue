@@ -30,6 +30,9 @@ export default {
         right: false,
       },
       touchStart: { x: 0, y: 0 },
+      yaw: 0, // Horizontal rotation (left/right)
+      pitch: 0, // Vertical rotation (up/down)
+      pitchLimit: Math.PI / 3, // Restrict pitch to a comfortable limit (e.g., 60 degrees)
       objects: [],
       canvas: document.createElement('canvas'),
       ctx: null,
@@ -41,11 +44,35 @@ export default {
       infoLogTexture: null,
     };
   },
+  props: {
+    joystickX: {
+      type: Number,
+      default: 0,
+    },
+    joystickY: {
+      type: Number,
+      default: 0,
+    }
+  },
   mounted() {
     this.initThreeJS().then(() => {
       this.loadObjectsFromBackend();
       this.setupPeriodicUpdate();
+      this.camera.rotation.order = 'YXZ';
     });
+  },
+  beforeUnmount() {
+    // Cleanup event listeners
+    window.removeEventListener('resize', this.checkOrientation);
+    window.removeEventListener('orientationchange', this.checkOrientation);
+    document.removeEventListener('pointerlockerror', this.onPointerLockError);
+    document.removeEventListener('keydown', this.onKeyDown);
+    document.removeEventListener('keyup', this.onKeyUp);
+    document.removeEventListener('touchstart', this.onTouchStart);
+    document.removeEventListener('touchmove', this.onTouchMove);
+
+    // Remove keydown event listener
+    window.removeEventListener('keydown', this.handleKeydown);
   },
   methods: {
     async initThreeJS() {
@@ -53,9 +80,9 @@ export default {
       const container = this.$refs.threeContainer;
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.rotation.order = 'YXZ'; // Ensure proper rotation order
       const renderer = new THREE.WebGLRenderer();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setClearColor(0xffffff, 1); // White background
       container.appendChild(renderer.domElement);
 
       // Lighting
@@ -70,25 +97,13 @@ export default {
       const axesHelper = new THREE.AxesHelper(5);
       scene.add(axesHelper);
 
-      // White Cube Room
-      const geometry = new THREE.BoxGeometry(1000, 1000, 1000);
-      const material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
-      const cube = new THREE.Mesh(geometry, material);
-      scene.add(cube);
-
       // Load Megaworld Image
       const textureLoader = new THREE.TextureLoader();
       textureLoader.load(require('@/assets/megaworld.png'), (texture) => {
         const aspect = texture.image.width / texture.image.height;
-        const planeWidth = 4;
-        const planeHeight = planeWidth / aspect;
-
-        // Create Plane Geometry for Image
-        const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+        const planeGeometry = new THREE.PlaneGeometry(4, 4 / aspect);
         const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
         const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-
-        // Position Plane at Center and adjust z-coordinate
         plane.position.set(0, 4, 0);
         scene.add(plane);
 
@@ -96,14 +111,7 @@ export default {
         const animate = () => {
           requestAnimationFrame(animate);
 
-          if (this.move.forward) controls.moveForward(0.1);
-          if (this.move.backward) controls.moveForward(-0.1);
-          if (this.move.left) controls.moveRight(-0.1);
-          if (this.move.right) controls.moveRight(0.1);
-
           plane.rotation.y += 0.01;
-
-          renderer.render(scene, camera);
         };
         animate();
       });
@@ -127,44 +135,63 @@ export default {
       });
 
       const move = this.move;
+      let movementSpeed = 10; // Adjust base movement speed
 
       const onKeyDown = (event) => {
-        switch (event.code) {
+        switch (event.key) {
           case 'ArrowUp':
-          case 'KeyW':
+          case 'w':
+          case 'W':
             move.forward = true;
             break;
           case 'ArrowDown':
-          case 'KeyS':
+          case 's':
+          case 'S':
             move.backward = true;
             break;
           case 'ArrowLeft':
-          case 'KeyA':
+          case 'a':
+          case 'A':
             move.left = true;
             break;
           case 'ArrowRight':
-          case 'KeyD':
+          case 'd':
+          case 'D':
             move.right = true;
+            break;
+          case '+':
+          case '=': // Often found in combination with shift for +
+            movementSpeed += 2;
+            console.log(`Increased movement speed: ${movementSpeed}`);
+            break;
+          case '-':
+          case '_': // Often found in combination with shift for -
+            movementSpeed = Math.max(2, movementSpeed - 2);
+            console.log(`Decreased movement speed: ${movementSpeed}`);
             break;
         }
       };
 
       const onKeyUp = (event) => {
-        switch (event.code) {
+        switch (event.key) {
           case 'ArrowUp':
-          case 'KeyW':
+          case 'w':
+          case 'W':
             move.forward = false;
             break;
           case 'ArrowDown':
-          case 'KeyS':
+          case 's':
+          case 'S':
             move.backward = false;
             break;
           case 'ArrowLeft':
-          case 'KeyA':
+          case 'a':
+          case 'A':
             move.left = false;
             break;
           case 'ArrowRight':
-          case 'KeyD':
+          case 'd':
+          case 'D':
             move.right = false;
             break;
         }
@@ -173,34 +200,24 @@ export default {
       document.addEventListener('keydown', onKeyDown);
       document.addEventListener('keyup', onKeyUp);
 
-      // Touch controls for mobile (look around)
-      const onTouchStart = (event) => {
-        this.touchStart.x = event.touches[0].clientX;
-        this.touchStart.y = event.touches[0].clientY;
-      };
+      let lastTime = 0;
 
-      const onTouchMove = (event) => {
-        const touchMoveX = event.touches[0].clientX - this.touchStart.x;
-        const touchMoveY = event.touches[0].clientY - this.touchStart.y;
-
-        camera.rotation.y -= touchMoveX * 0.002;
-        camera.rotation.x -= touchMoveY * 0.002;
-        camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
-
-        this.touchStart.x = event.touches[0].clientX;
-        this.touchStart.y = event.touches[0].clientY;
-      };
-
-      document.addEventListener('touchstart', onTouchStart);
-      document.addEventListener('touchmove', onTouchMove);
-
-      const animate = () => {
+      const animate = (time) => {
         requestAnimationFrame(animate);
 
-        if (this.move.forward) controls.moveForward(0.1);
-        if (this.move.backward) controls.moveForward(-0.1);
-        if (this.move.left) controls.moveRight(-0.1);
-        if (this.move.right) controls.moveRight(0.1);
+        const deltaTime = (time - lastTime) / 1000; // Convert to seconds
+        lastTime = time;
+
+        // Use joystick props for movement
+        if (this.joystickX !== 0 || this.joystickY !== 0) {
+          console.log('Using joystick for movement:', this.joystickX, this.joystickY, deltaTime);
+          this.moveCamera(this.joystickX, this.joystickY, deltaTime);
+        }
+
+        if (this.move.forward) controls.moveForward(movementSpeed * deltaTime);
+        if (this.move.backward) controls.moveForward(-movementSpeed * deltaTime);
+        if (this.move.left) controls.moveRight(-movementSpeed * deltaTime);
+        if (this.move.right) controls.moveRight(movementSpeed * deltaTime);
 
         renderer.render(scene, camera);
       };
@@ -233,9 +250,58 @@ export default {
       infoLogPlane.position.set(0, 2, 0);
       scene.add(infoLogPlane);
 
+      const allowScrollFov = true; // Set this to false to disable FOV adjustment
+
+      if (allowScrollFov) {
+        window.addEventListener('wheel', (event) => {
+          const fovMin = 5;
+          const fovMax = 175;
+          camera.fov += event.deltaY * 0.05; // Adjust scroll sensitivity here
+          camera.fov = Math.max(fovMin, Math.min(fovMax, camera.fov));
+          camera.updateProjectionMatrix();
+        });
+      } else {
+        camera.fov = 75;
+        camera.updateProjectionMatrix();
+      }
+
+      window.addEventListener('wheel', (event) => {
+        const fovMin = 5;
+        const fovMax = 175;
+        camera.fov += event.deltaY * 0.05; // Adjust scroll sensitivity here
+        camera.fov = Math.max(fovMin, Math.min(fovMax, camera.fov));
+        camera.updateProjectionMatrix();
+      });
+
       this.scene = scene;
       this.camera = camera;
       this.renderer = renderer;
+    },
+    rotateCamera(deltaX, deltaY) {
+      const rotationSpeed = 0.002; // Adjust for desired sensitivity
+      const pitchLimit = Math.PI / 3;
+
+      if (this.controls) {
+        // Update yaw and pitch by adding the deltas
+        this.yaw -= deltaX * rotationSpeed;
+        this.pitch -= deltaY * rotationSpeed;
+
+        // Clamp pitch to avoid flipping
+        this.pitch = Math.max(-pitchLimit, Math.min(pitchLimit, this.pitch));
+
+        // Apply rotation changes to the camera object
+        this.controls.object.rotation.y = this.yaw; // Yaw (left/right)
+        this.controls.object.rotation.x = this.pitch; // Pitch (up/down)
+        this.controls.object.rotation.z = 0; // Ensure no roll
+      }
+    },
+    moveCamera(x, y, deltaTime) {
+      const baseSpeed = 10;
+      if (this.controls) {
+        const distance = baseSpeed * deltaTime;
+        this.controls.moveForward(y * distance);
+        this.controls.moveRight(x * distance);
+      }
     },
     async createInfoLogCanvas() {
       if (!this.infoLogContainer) {
@@ -686,20 +752,7 @@ export default {
           return null;
       }
     }
-  },
-  beforeUnmount() {
-    // Cleanup event listeners
-    window.removeEventListener('resize', this.checkOrientation);
-    window.removeEventListener('orientationchange', this.checkOrientation);
-    document.removeEventListener('pointerlockerror', this.onPointerLockError);
-    document.removeEventListener('keydown', this.onKeyDown);
-    document.removeEventListener('keyup', this.onKeyUp);
-    document.removeEventListener('touchstart', this.onTouchStart);
-    document.removeEventListener('touchmove', this.onTouchMove);
-
-    // Remove keydown event listener
-    window.removeEventListener('keydown', this.handleKeydown);
-  },
+  }
 };
 </script>
 
