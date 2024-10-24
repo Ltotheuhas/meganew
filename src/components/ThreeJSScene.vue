@@ -320,7 +320,7 @@ export default {
       this.infoLogTexture.needsUpdate = true;
     },
     setupPeriodicUpdate() {
-      setInterval(this.updateInfoLogTexture, 5000); // Update every 5 seconds
+      setInterval(this.updateInfoLogTexture, 500); // Update every 5 seconds
     },
     async saveObjectsToBackend(objectToSave) {
       const apiUrl = process.env.VUE_APP_API_URL;

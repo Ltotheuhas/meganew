@@ -63,6 +63,8 @@ export default {
   justify-content: center;
   align-items: center;
   color: black;
+  font-family: 'Times New Roman', Times, serif;
+
 }
 
 .status {
