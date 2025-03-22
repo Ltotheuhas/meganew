@@ -320,7 +320,7 @@ export default {
       this.infoLogTexture.needsUpdate = true;
     },
     setupPeriodicUpdate() {
-      setInterval(this.updateInfoLogTexture, 5000); // Update every 5 seconds
+      setInterval(this.updateInfoLogTexture, 15000); // Update every 15 seconds
     },
     async saveObjectsToBackend(objectToSave) {
       const apiUrl = process.env.VUE_APP_API_URL;
@@ -494,7 +494,7 @@ export default {
       this.objects.push(objectToSave);
       await this.saveObjectsToBackend(objectToSave);
     },
-    async addModel(filePath, extension) {
+    /*async addModel(filePath, extension) {
       const loader = this.getLoader(extension);
       if (!loader) {
         console.error(`Unsupported model file type: ${extension}`);
@@ -569,7 +569,7 @@ export default {
           }
         );
       });
-    },
+    },*/
     loadImageFromData(obj) {
       const textureLoader = new THREE.TextureLoader();
       console.log('Loading image from data:', obj);
@@ -676,7 +676,7 @@ export default {
 
       console.log(`GIF ${obj.filePath} loaded and added to the scene.`);
     },
-    async loadModelFromData(obj) {
+    /*async loadModelFromData(obj) {
       console.log('Loading model from data:', obj); // Debugging log
 
       // Extract the file extension from the filePath
@@ -724,7 +724,7 @@ export default {
         );
         console.log(`Model ${obj.filePath} loaded and added to the scene.`);
       });
-    },
+    },*/
     getLoader(extension) {
       console.log(`getLoader called with extension: ${extension}`); // Add logging
       switch (extension.toLowerCase()) {

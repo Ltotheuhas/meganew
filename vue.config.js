@@ -1,7 +1,6 @@
 module.exports = {
-  publicPath: process.env.NODE_ENV === 'production'
-    ? '/meganew/'
-    : '/',
+  publicPath: "/",
+  outputDir: "dist",
   transpileDependencies: ['vue-joystick-component'],
   chainWebpack: (config) => {
     config.module

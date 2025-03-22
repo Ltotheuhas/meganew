@@ -9,7 +9,7 @@
       <p>Press B to upload a file</p>
       <p>Use WASD or arrow keys to move around</p>
       <p>Phone controls may or may not work rn</p>
-      <p>Currently supports images, gifs and 3d models</p>
+      <p>Currently supports images and gifs</p>
     </div>
   </div>
 </template>
