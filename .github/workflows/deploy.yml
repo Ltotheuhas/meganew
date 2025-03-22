@@ -1,0 +1,37 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: '${{ secrets.DEPLOY_KEY }}'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build the project
+        run: npm run build
+
+      - name: Deploy to Server
+        env:
+          REMOTE_DIR: /var/www/3dworld/dist
+        run: |
+          # Clear the old build
+          ssh -o StrictHostKeyChecking=no megaserver@62.178.10.6 "rm -rf $REMOTE_DIR/*"
+
+          # Copy the new build
+          scp -o StrictHostKeyChecking=no -r dist/* megaserver@62.178.10.6:$REMOTE_DIR
+
+          # Reload Nginx
+          ssh -o StrictHostKeyChecking=no megaserver@62.178.10.6 "sudo -n systemctl reload nginx"
