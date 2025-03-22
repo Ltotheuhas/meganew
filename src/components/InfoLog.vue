@@ -6,7 +6,7 @@
       <p v-for="(item, index) in todoList" :key="index">{{ item }}</p>
     </div>
     <div v-else>
-      <p>Press B to upload a file</p>
+      <p>Press B to upload a filee</p>
       <p>Use WASD or arrow keys to move around</p>
       <p>Phone controls may or may not work rn</p>
       <p>Currently supports images and gifs</p>
