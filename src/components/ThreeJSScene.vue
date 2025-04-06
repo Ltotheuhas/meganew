@@ -372,54 +372,67 @@ export default {
         console.error('Error loading objects from backend:', error);
       }
     },
-    async addImage(filePath) {
+    async addImage(uploadResult) {
       const textureLoader = new THREE.TextureLoader();
+      const initialUrl = uploadResult.large; // Start with high-res
 
-      console.log("addImage - filePath received:", filePath);
-
-      // Use the filePath to load the image texture from the server
       textureLoader.load(
-        `${process.env.VUE_APP_API_URL}${filePath}`, // Ensure your API URL is correctly set
-        async (texture) => {
-          // Calculate the aspect ratio of the image
+        `${process.env.VUE_APP_API_URL}${initialUrl}`,
+        (texture) => {
           const aspect = texture.image.width / texture.image.height;
-          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect); // Adjust dimensions based on aspect ratio
+          const planeGeometry = new THREE.PlaneGeometry(2, 2 / aspect);
           const planeMaterial = new THREE.MeshBasicMaterial({
             map: texture,
             side: THREE.DoubleSide,
-            transparent: true // Enable transparency
+            transparent: true,
           });
+
           const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
-          // Position the plane in front of the camera
-          const distance = 5; // Adjust as needed for your scene
+          // Position plane in front of camera
+          const distance = 5;
           const vector = new THREE.Vector3(0, 0, -distance);
           vector.applyQuaternion(this.camera.quaternion);
           plane.position.copy(this.camera.position).add(vector);
-          plane.lookAt(this.camera.position); // Make sure it faces the camera
+          plane.lookAt(this.camera.position);
 
-          // Add the plane to the scene
+          // Store all image sizes in userData for later swapping
+          plane.userData.textureUrls = {
+            small: uploadResult.small,
+            medium: uploadResult.medium,
+            large: uploadResult.large
+          };
+          plane.userData.currentTextureSize = "large";
+
           this.scene.add(plane);
 
-          // Push the object with the correct structure
+          // Track image planes for animation loop
+          if (!this.imagePlanes) this.imagePlanes = [];
+          this.imagePlanes.push(plane);
+
           const objectToSave = {
             type: 'image',
-            filePath: filePath, // Ensure the filePath is assigned here
-            position: plane.position.clone(),
-            rotation: plane.rotation.clone(),
-            uuid: plane.uuid
+            filePaths: plane.userData.textureUrls,
+            position: {
+              x: plane.position.x,
+              y: plane.position.y,
+              z: plane.position.z,
+            },
+            rotation: {
+              isEuler: true,
+              _x: plane.rotation.x,
+              _y: plane.rotation.y,
+              _z: plane.rotation.z,
+              _order: plane.rotation.order,
+            },
+            uuid: plane.uuid,
           };
 
-          console.log("Adding object to scene and saving:", objectToSave);
           this.objects.push(objectToSave);
-
-          // Save the updated objects list to the backend
-          await this.saveObjectsToBackend(objectToSave);
+          this.saveObjectsToBackend(objectToSave);
         },
         undefined,
-        (err) => {
-          console.error('Error loading texture:', err); // Handle any loading errors
-        }
+        (err) => console.error('Error loading texture:', err)
       );
     },
     async addGIF(filePath) {
@@ -481,13 +494,12 @@ export default {
       };
       animateGIF();
 
-      // Save the object with the correct structure to the backend
       const objectToSave = {
         type: 'gif',
-        filePath: filePath,
+        filePaths: { original: filePath }, // Store single path under 'original'
         position: plane.position.clone(),
         rotation: plane.rotation.clone(),
-        uuid: plane.uuid
+        uuid: plane.uuid,
       };
 
       console.log("Saving GIF object to backend:", objectToSave);
@@ -574,51 +586,58 @@ export default {
       const textureLoader = new THREE.TextureLoader();
       console.log('Loading image from data:', obj);
 
-      if (obj.filePath) {
-        textureLoader.load(
-          `${process.env.VUE_APP_API_URL}${obj.filePath}`,
-          (texture) => {
-            // Check if texture image is loaded properly
-            if (texture.image && texture.image.width && texture.image.height) {
-              const aspect = texture.image.width / texture.image.height;
-              const scale = obj.scale || 2; // Optionally use 'scale' property from obj, default to 2
-
-              // Create plane geometry and material using the texture
-              const planeGeometry = new THREE.PlaneGeometry(scale, scale / aspect);
-              const planeMaterial = new THREE.MeshBasicMaterial({
-                map: texture,
-                side: THREE.DoubleSide,
-                transparent: true // Enable transparency
-              });
-
-              // Create and configure the plane mesh
-              const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-              plane.position.copy(obj.position || new THREE.Vector3(0, 0, 0)); // Default position if not set
-              plane.rotation.copy(obj.rotation || new THREE.Euler(0, 0, 0)); // Default rotation if not set
-
-              this.scene.add(plane); // Add the plane to the scene
-
-              // Save the object reference for future cleanup
-              this.objects.push(plane);
-
-              console.log(`Image ${obj.filePath} loaded and added to the scene.`);
-            } else {
-              console.error('Texture image dimensions unavailable for:', obj.filePath);
-            }
-          },
-          undefined,
-          (err) => {
-            console.error(`Error loading texture from ${obj.filePath}:`, err);
-          }
-        );
-      } else {
-        console.error('No file path found for image object:', obj);
+      // 1. Confirm we have filePaths
+      if (!obj.filePaths || !obj.filePaths.large) {
+        console.error('No large file path found for image object:', obj);
+        return;
       }
+
+      // 2. Use the large path
+      const largePath = obj.filePaths.large;
+      textureLoader.load(
+        `${process.env.VUE_APP_API_URL}${largePath}`,
+        (texture) => {
+          // Check if texture image is loaded properly
+          if (texture.image && texture.image.width && texture.image.height) {
+            const aspect = texture.image.width / texture.image.height;
+            const scale = obj.scale || 2; // e.g. size of the plane
+
+            const planeGeometry = new THREE.PlaneGeometry(scale, scale / aspect);
+            const planeMaterial = new THREE.MeshBasicMaterial({
+              map: texture,
+              side: THREE.DoubleSide,
+              transparent: true
+            });
+
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+            // Use obj.position and obj.rotation if available
+            plane.position.copy(obj.position || new THREE.Vector3());
+            plane.rotation.set(
+              obj.rotation?._x || 0,
+              obj.rotation?._y || 0,
+              obj.rotation?._z || 0,
+              obj.rotation?._order || 'XYZ'
+            );
+
+            this.scene.add(plane);
+            this.objects.push(plane);
+
+            console.log(`Loaded image from ${largePath} and added to the scene.`);
+          } else {
+            console.error('Texture image dimensions unavailable for:', largePath);
+          }
+        },
+        undefined,
+        (err) => {
+          console.error(`Error loading texture from ${largePath}:`, err);
+        }
+      );
     },
     async loadGIFFromData(obj) {
       console.log('Loading GIF from data:', obj);
 
-      const response = await fetch(`${process.env.VUE_APP_API_URL}${obj.filePath}`);
+      const response = await fetch(`${process.env.VUE_APP_API_URL}${obj.filePaths.original}`);
       const arrayBuffer = await response.arrayBuffer();
       const gif = parseGIF(arrayBuffer);
       const frames = decompressFrames(gif, true);
@@ -674,7 +693,7 @@ export default {
 
       animateGIF();
 
-      console.log(`GIF ${obj.filePath} loaded and added to the scene.`);
+      console.log(`Loaded GIF from ${obj.filePaths.original} and added to the scene.`);
     },
     /*async loadModelFromData(obj) {
       console.log('Loading model from data:', obj); // Debugging log

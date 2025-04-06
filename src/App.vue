@@ -138,7 +138,6 @@ export default {
 
         const result = await response.json();
         console.log("Upload result:", result);
-        const filePath = result.filePath;
 
         const extension = file.name.split('.').pop().toLowerCase();
 
@@ -146,14 +145,14 @@ export default {
           case 'jpg':
           case 'jpeg':
           case 'png':
-            this.$refs.threeScene.addImage(filePath);
+            this.$refs.threeScene.addImage(result);
             break;
           case 'gif':
-            this.$refs.threeScene.addGIF(filePath);
+            this.$refs.threeScene.addGIF(result.original);
             break;
           case 'mp3':
           case 'wav':
-            this.$refs.threeScene.addAudio(filePath);
+            this.$refs.threeScene.addAudio(result);
             break;
           case 'gltf':
           case 'glb':
@@ -165,7 +164,7 @@ export default {
           case 'ply':
           case 'x3d':
           case 'wrl':
-            this.$refs.threeScene.addModel(filePath, extension);
+            this.$refs.threeScene.addModel(result, extension);
             break;
           default:
             console.error('Unsupported file type');
