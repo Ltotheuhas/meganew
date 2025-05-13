@@ -149,6 +149,11 @@ export default {
 </script>
 
 <style>
+html,
+body {
+  overscroll-behavior: none;
+}
+
 .upload_button {
   position: absolute;
   top: 10px;

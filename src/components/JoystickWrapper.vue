@@ -29,10 +29,9 @@ const pid = ref(null); // pointerId of the finger that touched the stick
 
 function onPointerDown(e) {
   pid.value = e.pointerId;
-}
-function onStart() {
   emit("joystick-start", { id: pid.value });
 }
+function onStart() {}
 function onMove(v) {
   emit("joystick-move", { id: pid.value, dx: v.x, dy: v.y });
 }
