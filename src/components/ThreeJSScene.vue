@@ -10,7 +10,6 @@ import {
   onBeforeUnmount,
   createApp,
   nextTick,
-  toRef,
   watch,
 } from "vue";
 import InfoLog from "./InfoLog.vue";
@@ -23,18 +22,13 @@ import { createInfoLogTexture, updateInfoLog } from "@/services/infoLogCanvas";
 
 export default {
   name: "ThreeJSScene",
-  props: {
-    joystickX: { type: Number, default: 0 },
-    joystickY: { type: Number, default: 0 },
-  },
-  setup(props) {
+  setup() {
     const threeContainer = ref(null);
     const { scene, camera, renderer } = useThree(threeContainer);
-    const { controls } = useControls(
+    // grab ALL the things useControls returns
+    const { controls, joystickStart, joystickMove, joystickEnd } = useControls(
       camera,
-      renderer.domElement,
-      toRef(props, "joystickX"),
-      toRef(props, "joystickY")
+      renderer.domElement
     );
 
     // Use your existing sceneActions to handle persistence
@@ -196,7 +190,11 @@ export default {
     return {
       threeContainer,
       controls,
-      // expose the wrapped image‐uploader
+      /* joystick hooks exposed for the parent */
+      joystickStart,
+      joystickMove,
+      joystickEnd,
+      /* uploader helpers */
       addImage: addImageWithLOD,
       addGIF,
       addModel,
