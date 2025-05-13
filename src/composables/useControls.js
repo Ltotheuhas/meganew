@@ -104,10 +104,11 @@ export function useControls(camera, domElement) {
   /* ---------- mobile look-around with any non-joystick finger --- */
   const last = new Map(); // pointerId → {x,y}
   function onPtrDown(e) {
-    if (!joyIds.has(e.pointerId))
-      last.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (joyIds.has(e.pointerId)) return;
+    last.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onPtrMove(e) {
+    e.preventDefault();
     if (!last.has(e.pointerId)) return;
     const l = last.get(e.pointerId);
     camera.rotation.y -= (e.clientX - l.x) * 0.002;
