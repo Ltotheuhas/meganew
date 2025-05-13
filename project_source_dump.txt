@@ -1,0 +1,994 @@
+
+
+===== src/components/InfoLog.vue =====
+<template>
+  <div class="info-log">
+    <h1 class="status">{{ backendStatus }}</h1>
+    <div v-if="isLocalhost">
+      <h2>Todo</h2>
+      <p v-for="(item, index) in todoList" :key="index">{{ item }}</p>
+    </div>
+    <div v-else>
+      <p>Press B to upload a file</p>
+      <p>Use WASD or arrow keys to move around</p>
+      <p>Currently supports images and gifs</p>
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      backendStatus: 'Checking...',
+      isLocalhost: false
+    };
+  },
+  mounted() {
+    this.isLocalhost = window.location.hostname === 'localhost';
+    this.checkBackendStatus();
+  },
+  methods: {
+    async checkBackendStatus() {
+      console.log('InfoLog: Checking backend status...');
+      try {
+        const apiUrl = process.env.VUE_APP_API_URL; // or whichever var you use
+        const response = await fetch(`${apiUrl}/health`);
+        if (response.ok) {
+          console.log('InfoLog: Backend is online');
+          this.backendStatus = 'ONLINE';
+        } else {
+          console.log('InfoLog: Backend is offline');
+          this.backendStatus = 'OFFLINE';
+        }
+      } catch (error) {
+        console.error('Error checking backend status:', error);
+        this.backendStatus = 'OFFLINE';
+      }
+    }
+  }
+};
+</script>
+
+<style scoped>
+.info-log {
+  text-align: center;
+  background-color: transparent;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: black;
+}
+
+.status {
+  margin-bottom: 0;
+}
+</style>
+
+
+===== src/components/ThreeJSScene.vue =====
+<template>
+  <div ref="threeContainer" class="three-container"></div>
+</template>
+
+<script>
+import * as THREE from 'three'
+import {
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  createApp,
+  nextTick,
+  toRef,
+  watch
+} from 'vue'
+import InfoLog from './InfoLog.vue'
+import { useThree } from '@/composables/useThree'
+import { useControls } from '@/composables/useControls'
+import { loadImage, loadGIF, loadModel } from '@/services/threeLoaders'
+import { fetchObjects } from '@/services/objectService'
+import { createSceneActions } from '@/services/sceneActions'
+import {
+  createInfoLogTexture,
+  updateInfoLog
+} from '@/services/infoLogCanvas'
+
+export default {
+  name: 'ThreeJSScene',
+  props: {
+    joystickX: { type: Number, default: 0 },
+    joystickY: { type: Number, default: 0 }
+  },
+  setup(props) {
+    const threeContainer = ref(null)
+    const { scene, camera, renderer } = useThree(threeContainer)
+    const { controls } = useControls(
+      camera,
+      renderer.domElement,
+      toRef(props, 'joystickX'),
+      toRef(props, 'joystickY')
+    )
+
+    // Use your existing sceneActions to handle persistence
+    const { addImage, addGIF, addModel } = createSceneActions(scene, camera)
+
+    // We'll keep track of every image plane you add for dynamic LOD swaps:
+    const imagePlanes = []
+
+    // Wrap your addImage so we can capture the mesh when it's created:
+    function addImageWithLOD(uploadResult) {
+      addImage(uploadResult, mesh => {
+        // mesh.userData.textureUrls was set in sceneActions
+        imagePlanes.push(mesh)
+      })
+    }
+
+    let infoContainer, infoInstance, infoTexture
+
+    onMounted(async () => {
+      // --- Megaworld rotating image (same as before) ---
+      const loader = new THREE.TextureLoader()
+      loader.load(require('@/assets/megaworld.png'), texture => {
+        const aspect = texture.image.width / texture.image.height
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(4, 4 / aspect),
+          new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            side: THREE.DoubleSide
+          })
+        )
+        plane.position.set(0, 4, 0)
+        scene.add(plane)
+          ; (function rotate() {
+            requestAnimationFrame(rotate)
+            plane.rotation.y += 0.01
+          })()
+      })
+
+      // --- InfoLog overlay (unchanged) ---
+      const app = createApp(InfoLog)
+      infoContainer = document.createElement('div')
+      document.body.appendChild(infoContainer)
+      infoInstance = app.mount(infoContainer)
+      await nextTick()
+
+      infoTexture = await createInfoLogTexture(infoContainer)
+      const infoAspect = infoTexture.image.width / infoTexture.image.height
+      const infoPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(16, 16 / infoAspect),
+        new THREE.MeshBasicMaterial({ map: infoTexture, transparent: true })
+      )
+      infoPlane.position.set(0, 2, 0)
+      scene.add(infoPlane)
+
+      if (infoInstance.backendStatus !== 'Checking...') {
+        updateInfoLog(infoTexture, infoContainer)
+      }
+      const stop = watch(
+        () => infoInstance.backendStatus,
+        val => {
+          if (val !== 'Checking...') {
+            updateInfoLog(infoTexture, infoContainer)
+            stop()
+          }
+        }
+      )
+
+      // --- Rehydrate saved objects, now including images ---
+      const objs = await fetchObjects()
+      objs.forEach(obj => {
+        const url =
+          obj.type === 'model'
+            ? `${process.env.VUE_APP_API_URL}${obj.filePath}`
+            : `${process.env.VUE_APP_API_URL}${obj.filePaths.original || obj.filePaths.large
+            }`
+        const pos = new THREE.Vector3(
+          obj.position.x,
+          obj.position.y,
+          obj.position.z
+        )
+        const rot = obj.rotation.isEuler
+          ? new THREE.Euler(
+            obj.rotation._x,
+            obj.rotation._y,
+            obj.rotation._z,
+            obj.rotation._order
+          )
+          : obj.rotation
+
+        if (obj.type === 'image') {
+          // loadImage from threeLoaders adds the mesh immediately:
+          loadImage(scene, url, pos, rot, mesh => {
+            imagePlanes.push(mesh)
+          })
+        } else if (obj.type === 'gif') {
+          loadGIF(scene, url, pos, rot)
+        } else if (obj.type === 'model') {
+          loadModel(scene, url, pos, rot)
+        }
+      })
+    })
+
+    onBeforeUnmount(() => {
+      if (infoInstance) {
+        document.body.removeChild(infoContainer)
+      }
+    })
+
+    const lodLoader = new THREE.TextureLoader()
+
+    //
+    // Level-of-Detail: switch texture based on camera distance
+    //
+    function updateLOD() {
+      imagePlanes.forEach(plane => {
+        const urls = plane.userData.textureUrls
+        if (!urls) return // skip any plane without LOD data
+
+        // measure distance from camera to plane
+        const dist = camera.position.distanceTo(plane.position)
+
+        // pick which LOD we want
+        let desiredSize
+        if (dist > 10) {
+          desiredSize = 'small'
+        } else if (dist > 5) {
+          desiredSize = 'medium'
+        } else {
+          desiredSize = 'large'
+        }
+
+        // only swap if it’s different than what we’ve got
+        const current = plane.userData.currentTextureSize
+        if (desiredSize !== current) {
+          console.log(
+            `Image ${plane.uuid}: switching from ${current.toUpperCase()} → ${desiredSize.toUpperCase()}`
+          )
+
+          // build the URL and load it
+          const url = `${process.env.VUE_APP_API_URL}${urls[desiredSize]}`
+          lodLoader.load(url, texture => {
+            plane.material.map = texture
+            plane.material.needsUpdate = true
+            plane.userData.currentTextureSize = desiredSize
+          })
+        }
+      })
+    }
+
+    // Insert our LOD step into the render loop
+    (function animateLoop() {
+      requestAnimationFrame(animateLoop)
+      updateLOD()
+      renderer.render(scene, camera)
+    })()
+
+    return {
+      threeContainer,
+      controls,
+      // expose the wrapped image‐uploader
+      addImage: addImageWithLOD,
+      addGIF,
+      addModel
+    }
+  }
+}
+</script>
+
+<style scoped>
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.three-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+</style>
+
+
+===== src/components/UploadMenu.vue =====
+<template>
+    <div class="upload-menu">
+      <input type="file" @change="handleFileUpload" />
+    </div>
+  </template>
+  
+  <script>
+  export default {
+    methods: {
+      handleFileUpload(event) {
+        const file = event.target.files[0];
+        this.$emit('upload', file);
+      },
+    },
+  };
+  </script>
+  
+  <style>
+  .upload-menu {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 20px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+  </style>
+  
+
+===== src/App.vue =====
+<template>
+  <div>
+    <ThreeJSScene ref="threeScene" :joystickX="joystickX" :joystickY="joystickY" />
+    <div class="joystick-wrapper">
+      <Joystick v-if="isMobile" stickColor="lightgrey" size="100" throttle="100" @move="handleJoystickMove"
+        @stop="handleJoystickStop" />
+    </div>
+    <button v-if="isMobile" class="upload_button" @click="toggleUploadMenu">Upload Files</button>
+    <UploadMenu v-if="showUploadMenu" @upload="handleUpload" />
+  </div>
+</template>
+
+<script>
+import Joystick from 'vue-joystick-component';
+import ThreeJSScene from './components/ThreeJSScene.vue';
+import UploadMenu from './components/UploadMenu.vue';
+
+export default {
+  components: {
+    ThreeJSScene,
+    UploadMenu,
+    Joystick,
+  },
+  data() {
+    return {
+      showUploadMenu: false,
+      isMobile: /Mobi|Android/i.test(navigator.userAgent),
+      swipeTouch: { x: 0, y: 0 },
+      isTouchOnJoystick: false,
+      joystickX: 0, // Reactive joystick X value
+      joystickY: 0  // Reactive joystick Y value
+    };
+  },
+  mounted() {
+    window.addEventListener('keydown', this.handleKeydown);
+    document.addEventListener('touchstart', this.handleTouchStart);
+    document.addEventListener('touchmove', this.handleTouchMove);
+    document.addEventListener('touchend', this.handleTouchEnd);
+  },
+  beforeUnmount() {
+    window.removeEventListener('keydown', this.handleKeydown);
+    document.removeEventListener('touchstart', this.handleTouchStart);
+    document.removeEventListener('touchmove', this.handleTouchMove);
+    document.removeEventListener('touchend', this.handleTouchEnd);
+  },
+  methods: {
+    toggleUploadMenu() {
+      this.showUploadMenu = !this.showUploadMenu;
+      if (this.showUploadMenu) {
+        // Unlock the mouse from Pointer Lock mode
+        document.exitPointerLock();
+      } else {
+        // Lock the mouse back into Pointer Lock mode if controls are initialized
+        if (this.$refs.threeScene.controls && this.$refs.threeScene.controls.isLocked === false) {
+          this.$refs.threeScene.controls.lock();
+        }
+      }
+    },
+    handleKeydown(event) {
+      if (event.key.toLowerCase() === 'b') {
+        this.toggleUploadMenu();
+      }
+    },
+    handleTouchStart(event) {
+      const joystickElement = this.$el.querySelector('.joystick-wrapper');
+      if (!joystickElement) return;
+
+      const touch = event.touches[0];
+      const rect = joystickElement.getBoundingClientRect();
+
+      // Check if the touch is within the joystick area
+      this.isTouchOnJoystick = touch.clientX >= rect.left && touch.clientX <= rect.right &&
+        touch.clientY >= rect.top && touch.clientY <= rect.bottom;
+
+      console.log('Touch on Joystick:', this.isTouchOnJoystick); // Debugging
+
+      if (!this.isTouchOnJoystick) {
+        this.swipeTouch.x = touch.clientX;
+        this.swipeTouch.y = touch.clientY;
+
+        // Initialize yaw and pitch only if not touching the joystick
+        const { rotation } = this.$refs.threeScene.controls.object;
+        this.$refs.threeScene.yaw = rotation.y;
+        this.$refs.threeScene.pitch = rotation.x;
+      }
+    },
+    handleTouchMove(event) {
+      if (this.isTouchOnJoystick) {
+        console.log('Skipping rotateCamera due to joystick use');
+        return; // Skip rotateCamera if using joystick
+      }
+
+      const touch = event.touches[0];
+      const deltaX = touch.clientX - this.swipeTouch.x;
+      const deltaY = touch.clientY - this.swipeTouch.y;
+
+      console.log('Calling rotateCamera with:', deltaX, deltaY); // Debugging
+
+      if (this.$refs.threeScene) {
+        this.$refs.threeScene.rotateCamera(deltaX, deltaY);
+      }
+
+      this.swipeTouch.x = touch.clientX;
+      this.swipeTouch.y = touch.clientY;
+    },
+    handleTouchEnd() {
+      this.isTouchOnJoystick = false;
+    },
+    handleJoystickMove({ x, y }) {
+      this.joystickX = x;
+      this.joystickY = y;
+    },
+    handleJoystickStop() {
+      this.joystickX = 0;
+      this.joystickY = 0;
+    },
+    async handleUpload(file) {
+      const fileSizeLimit = 10 * 1024 * 1024; // 10MB limit
+
+      if (file.size > fileSizeLimit) {
+        alert('File size exceeds the limit of ' + fileSizeLimit / 1024 / 1024 + 'MB.');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const apiUrl = process.env.VUE_APP_API_URL; // Your backend URL
+        const response = await fetch(`${apiUrl}/upload`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to upload file');
+        }
+
+        const result = await response.json();
+        console.log("Upload result:", result);
+
+        const extension = file.name.split('.').pop().toLowerCase();
+
+        switch (extension) {
+          case 'jpg':
+          case 'jpeg':
+          case 'png':
+            this.$refs.threeScene.addImage(result);
+            break;
+          case 'gif':
+            this.$refs.threeScene.addGIF(result);
+            break;
+          case 'mp3':
+          case 'wav':
+            this.$refs.threeScene.addAudio(result);
+            break;
+          case 'gltf':
+          case 'glb':
+          case 'obj':
+          case 'fbx':
+          case 'stl':
+          case 'dae':
+          case '3ds':
+          case 'ply':
+          case 'x3d':
+          case 'wrl':
+            this.$refs.threeScene.addModel(result, extension);
+            break;
+          default:
+            console.error('Unsupported file type');
+        }
+
+        this.showUploadMenu = false;
+        if (this.$refs.threeScene.controls) {
+          this.$refs.threeScene.controls.lock();
+        }
+
+      } catch (error) {
+        console.error('Error uploading file:', error);
+      }
+    },
+  },
+};
+</script>
+
+<style>
+.upload_button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.joystick-wrapper {
+  position: absolute;
+  bottom: 35px;
+  left: 35px;
+  z-index: 10;
+}
+</style>
+
+
+===== src/services/objectService.js =====
+const apiUrl = process.env.VUE_APP_API_URL
+
+export async function fetchObjects() {
+    const res = await fetch(`${apiUrl}/objects`)
+    if (!res.ok) throw new Error(`Failed to fetch objects: ${res.statusText}`)
+    return res.json()
+}
+
+export async function saveObject(object) {
+    const res = await fetch(`${apiUrl}/objects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(object),
+    })
+    if (!res.ok) throw new Error(`Failed to save object: ${res.statusText}`)
+    return res.json()
+}
+
+
+===== src/services/threeLoaders.js =====
+// src/services/threeLoaders.js
+import * as THREE from 'three'
+import { parseGIF, decompressFrames } from 'gifuct-js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js'
+import { TDSLoader } from 'three/examples/jsm/loaders/TDSLoader.js'
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
+import { VRMLLoader } from 'three/examples/jsm/loaders/VRMLLoader.js'
+
+/** Image → Plane */
+export function loadImage(
+    scene,
+    url,
+    position = new THREE.Vector3(),
+    rotation = new THREE.Euler(),
+    saveCb
+) {
+    const loader = new THREE.TextureLoader()
+    loader.load(
+        url,
+        tex => {
+            const aspect = tex.image.width / tex.image.height
+            const mesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(2, 2 / aspect),
+                new THREE.MeshBasicMaterial({
+                    map: tex,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                })
+            )
+            mesh.position.copy(position)
+            mesh.rotation.copy(rotation)
+            scene.add(mesh)
+            if (saveCb) saveCb(mesh)
+        },
+        undefined,
+        err => console.error('Error loading texture', err)
+    )
+}
+
+/** GIF → Animated CanvasTexture */
+export async function loadGIF(
+    scene,
+    url,
+    position = new THREE.Vector3(),
+    rotation = new THREE.Euler(),
+    saveCb
+) {
+    const res = await fetch(url)
+    const buffer = await res.arrayBuffer()
+    const gif = parseGIF(buffer)
+    const frames = decompressFrames(gif, true)
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    canvas.width = frames[0].dims.width
+    canvas.height = frames[0].dims.height
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.needsUpdate = true
+
+    const aspect = canvas.width / canvas.height
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2 / aspect),
+        new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            side: THREE.DoubleSide
+        })
+    )
+    mesh.position.copy(position)
+    mesh.rotation.copy(rotation)
+    scene.add(mesh)
+
+    let idx = 0
+    const animate = () => {
+        const f = frames[idx]
+        ctx.putImageData(
+            new ImageData(new Uint8ClampedArray(f.patch), f.dims.width, f.dims.height),
+            f.dims.left,
+            f.dims.top
+        )
+        texture.needsUpdate = true
+        idx = (idx + 1) % frames.length
+        const delay = f.delay < 10 ? f.delay * 10 : f.delay
+        setTimeout(animate, delay)
+    }
+    animate()
+
+    if (saveCb) saveCb(mesh)
+}
+
+/** Model → Scene (auto-scaled, positioned) */
+export async function loadModel(
+    scene,
+    url,
+    position = new THREE.Vector3(),
+    rotation = new THREE.Euler(),
+    saveCb
+) {
+    const ext = url.split('.').pop().toLowerCase()
+    let loader
+
+    switch (ext) {
+        case 'gltf':
+        case 'glb':
+            loader = new GLTFLoader()
+            break
+        case 'obj':
+            loader = new OBJLoader()
+            break
+        case 'fbx':
+            loader = new FBXLoader()
+            break
+        case 'stl':
+            loader = new STLLoader()
+            break
+        case 'dae':
+            loader = new ColladaLoader()
+            break
+        case '3ds':
+            loader = new TDSLoader()
+            break
+        case 'ply':
+            loader = new PLYLoader()
+            break
+        case 'wrl':
+            loader = new VRMLLoader()
+            break
+        default:
+            console.error(`Unsupported model type: ${ext}`)
+            return
+    }
+
+    loader.load(
+        url,
+        gltf => {
+            const obj = gltf.scene || gltf
+            // auto-scale to max height 5
+            const box = new THREE.Box3().setFromObject(obj)
+            const h = box.max.y - box.min.y
+            if (h > 5) {
+                const s = 5 / h
+                obj.scale.set(s, s, s)
+            }
+            obj.position.copy(position)
+            obj.rotation.copy(rotation)
+            scene.add(obj)
+            if (saveCb) saveCb(obj)
+        },
+        undefined,
+        err => console.error('Error loading model', err)
+    )
+}
+
+
+===== src/services/sceneActions.js =====
+// src/services/sceneActions.js
+import * as THREE from 'three'
+import { loadImage, loadGIF, loadModel } from '@/services/threeLoaders'
+import { saveObject } from '@/services/objectService'
+
+/**
+ * Returns functions to add new objects (image, gif, model) into a Three.js scene
+ * and automatically persist them to your backend.
+ *
+ * @param {THREE.Scene} scene
+ * @param {THREE.Camera} camera
+ */
+export function createSceneActions(scene, camera) {
+    const forwardOffset = new THREE.Vector3(0, 0, -5)
+
+    function _getPlacement() {
+        return camera.position.clone()
+            .add(forwardOffset.applyQuaternion(camera.quaternion))
+    }
+
+    /**
+     * uploadResult.filePaths is expected to be an object like:
+     * { original: "...", small: "...", medium: "...", large: "..." }
+     */
+    async function addImage(uploadResult) {
+        // 1️⃣ pull all three URLs
+        const urls = uploadResult.filePaths;
+        const largeUrl = `${process.env.VUE_APP_API_URL}${urls.large}`;
+
+        // 2️⃣ figure out where & how to place it
+        const pos = _getPlacement();
+        const rot = camera.rotation.clone();
+
+        // 3️⃣ call your loader helper
+        loadImage(scene, largeUrl, pos, rot, mesh => {
+            // ➡️ attach LOD info to this mesh
+            mesh.userData.textureUrls = urls;
+            mesh.userData.currentTextureSize = 'large';
+            console.log(`Image ${mesh.uuid}: initial LOD → LARGE`);
+
+            // 4️⃣ persist to your backend
+            saveObject({
+                type: 'image',
+                filePaths: urls,
+                position: mesh.position,
+                rotation: mesh.rotation,
+                uuid: mesh.uuid
+            }).catch(console.error);
+        });
+    }
+
+    async function addGIF(uploadResult) {
+        const url = `${process.env.VUE_APP_API_URL}${uploadResult.filePaths.original}`
+        const pos = _getPlacement()
+        const rot = camera.rotation.clone()
+
+        loadGIF(scene, url, pos, rot, mesh => {
+            saveObject({
+                type: 'gif',
+                filePaths: uploadResult.filePaths,
+                position: mesh.position,
+                rotation: mesh.rotation,
+                uuid: mesh.uuid
+            }).catch(console.error)
+        })
+    }
+
+    function addModel(result, extension) {
+        const url = `${process.env.VUE_APP_API_URL}${result.filePath}`
+        const pos = _getPlacement()
+        const rot = camera.rotation.clone()
+
+        loadModel(scene, url, pos, rot, mesh => {
+            saveObject({
+                type: 'model',
+                filePath: result.filePath,
+                extension,
+                position: mesh.position,
+                rotation: mesh.rotation,
+                uuid: mesh.uuid
+            }).catch(console.error)
+        })
+    }
+
+    return { addImage, addGIF, addModel }
+}
+
+
+===== src/services/infoLogCanvas.js =====
+import html2canvas from 'html2canvas'
+import * as THREE from 'three'
+
+export async function createInfoLogTexture(containerEl) {
+    const canvas = await html2canvas(containerEl, { backgroundColor: null, scale: 2 })
+    return new THREE.CanvasTexture(canvas)
+}
+
+export async function updateInfoLog(texture, containerEl) {
+    const canvas = await html2canvas(containerEl, { backgroundColor: null, scale: 2 })
+    texture.image = canvas
+    texture.needsUpdate = true
+}
+
+
+
+===== src/composables/useThree.js =====
+// src/composables/useThree.js
+import * as THREE from 'three'
+import { onMounted, onBeforeUnmount } from 'vue'
+
+export function useThree(containerRef) {
+    const scene = new THREE.Scene()
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    let animReq
+
+    function onResize() {
+        camera.aspect = window.innerWidth / window.innerHeight
+        camera.updateProjectionMatrix()
+        renderer.setSize(window.innerWidth, window.innerHeight)
+    }
+
+    function onWheel(e) {
+        camera.fov = Math.max(5, Math.min(175, camera.fov + e.deltaY * 0.05))
+        camera.updateProjectionMatrix()
+    }
+
+    onMounted(() => {
+        // Rotation order to avoid gimbal lock
+        camera.rotation.order = 'YXZ'
+
+        renderer.setSize(window.innerWidth, window.innerHeight)
+        renderer.setClearColor(0xffffff, 1)
+        containerRef.value.appendChild(renderer.domElement)
+
+        scene.add(new THREE.AmbientLight(0xffffff))
+        scene.add(new THREE.GridHelper(20, 20))
+        scene.add(new THREE.AxesHelper(5))
+
+        camera.position.set(0, 2, 5)
+        window.addEventListener('resize', onResize)
+        window.addEventListener('wheel', onWheel)
+
+        const loop = () => {
+            animReq = requestAnimationFrame(loop)
+            renderer.render(scene, camera)
+        }
+        animReq = requestAnimationFrame(loop)
+    })
+
+    onBeforeUnmount(() => {
+        cancelAnimationFrame(animReq)
+        window.removeEventListener('resize', onResize)
+        window.removeEventListener('wheel', onWheel)
+
+        // dispose renderer & DOM
+        renderer.dispose()
+        if (renderer.domElement.parentNode) {
+            renderer.domElement.parentNode.removeChild(renderer.domElement)
+        }
+
+        // dispose scene geometries/materials
+        scene.traverse(obj => {
+            if (obj.geometry) obj.geometry.dispose()
+            if (obj.material) {
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+                mats.forEach(m => {
+                    for (const key of ['map', 'alphaMap', 'aoMap', 'bumpMap', 'emissiveMap', 'roughnessMap']) {
+                        if (m[key]) m[key].dispose()
+                    }
+                    m.dispose()
+                })
+            }
+        })
+    })
+
+    return { scene, camera, renderer }
+}
+
+
+===== src/composables/useControls.js =====
+// src/composables/useControls.js
+import { onMounted, onBeforeUnmount } from 'vue'
+import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
+
+export function useControls(camera, domElement, joystickXRef, joystickYRef) {
+    const controls = new PointerLockControls(camera, domElement)
+    const move = { forward: false, backward: false, left: false, right: false }
+    let speed = 10
+    let lastTime = 0
+    let touchStart = { x: 0, y: 0 }
+
+    function onKeyDown(e) {
+        switch (e.key) {
+            case 'w': case 'W': case 'ArrowUp': move.forward = true; break
+            case 's': case 'S': case 'ArrowDown': move.backward = true; break
+            case 'a': case 'A': case 'ArrowLeft': move.left = true; break
+            case 'd': case 'D': case 'ArrowRight': move.right = true; break
+            case '+': case '=': speed += 2; console.log(`Speed: ${speed}`); break
+            case '-': case '_': speed = Math.max(2, speed - 2); console.log(`Speed: ${speed}`); break
+        }
+    }
+    function onKeyUp(e) {
+        switch (e.key) {
+            case 'w': case 'W': case 'ArrowUp': move.forward = false; break
+            case 's': case 'S': case 'ArrowDown': move.backward = false; break
+            case 'a': case 'A': case 'ArrowLeft': move.left = false; break
+            case 'd': case 'D': case 'ArrowRight': move.right = false; break
+        }
+    }
+    function onPointerError() {
+        console.error('Pointer lock error')
+    }
+    function onTouchStart(e) {
+        if (e.touches.length === 1) {
+            touchStart.x = e.touches[0].clientX
+            touchStart.y = e.touches[0].clientY
+        }
+    }
+    function onTouchMove(e) {
+        if (e.touches.length === 1) {
+            const dx = e.touches[0].clientX - touchStart.x
+            const dy = e.touches[0].clientY - touchStart.y
+            // yaw & pitch
+            controls.getObject().rotation.y -= dx * 0.002
+            controls.getObject().rotation.x -= dy * 0.002
+            controls.getObject().rotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, controls.getObject().rotation.x))
+            touchStart.x = e.touches[0].clientX
+            touchStart.y = e.touches[0].clientY
+        }
+    }
+
+    function animate(time) {
+        requestAnimationFrame(animate)
+        const dt = (time - lastTime) / 1000
+        lastTime = time
+
+        const jx = joystickXRef.value
+        const jy = joystickYRef.value
+
+        if (jx || jy) {
+            controls.moveForward(jy * speed * dt)
+            controls.moveRight(jx * speed * dt)
+        } else {
+            if (move.forward) controls.moveForward(speed * dt)
+            if (move.backward) controls.moveForward(-speed * dt)
+            if (move.left) controls.moveRight(-speed * dt)
+            if (move.right) controls.moveRight(speed * dt)
+        }
+    }
+
+    onMounted(() => {
+        document.addEventListener('pointerlockerror', onPointerError)
+        document.addEventListener('keydown', onKeyDown)
+        document.addEventListener('keyup', onKeyUp)
+        domElement.addEventListener('click', () => controls.lock())
+        document.addEventListener('touchstart', onTouchStart)
+        document.addEventListener('touchmove', onTouchMove)
+        requestAnimationFrame(animate)
+    })
+
+    onBeforeUnmount(() => {
+        document.removeEventListener('pointerlockerror', onPointerError)
+        document.removeEventListener('keydown', onKeyDown)
+        document.removeEventListener('keyup', onKeyUp)
+        document.removeEventListener('touchstart', onTouchStart)
+        document.removeEventListener('touchmove', onTouchMove)
+    })
+
+    return { controls }
+}
+
+
+===== src/main.js =====
+import { createApp } from 'vue'
+import App from './App.vue'
+
+createApp(App).mount('#app')

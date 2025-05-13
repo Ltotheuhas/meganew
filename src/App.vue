@@ -148,7 +148,7 @@ export default {
             this.$refs.threeScene.addImage(result);
             break;
           case 'gif':
-            this.$refs.threeScene.addGIF(result.original);
+            this.$refs.threeScene.addGIF(result);
             break;
           case 'mp3':
           case 'wav':

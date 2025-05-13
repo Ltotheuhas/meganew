@@ -17,11 +17,8 @@
 export default {
   data() {
     return {
-      isLocalhost: false,
       backendStatus: 'Checking...',
-      todoList: [
-        'idk',
-      ]
+      isLocalhost: false
     };
   },
   mounted() {
@@ -30,16 +27,15 @@ export default {
   },
   methods: {
     async checkBackendStatus() {
+      console.log('InfoLog: Checking backend status...');
       try {
-        console.log('Checking backend status...');
-        const apiUrl = process.env.VUE_APP_API_URL;
+        const apiUrl = process.env.VUE_APP_API_URL; // or whichever var you use
         const response = await fetch(`${apiUrl}/health`);
-        console.log('Response:', response);
         if (response.ok) {
-          console.log('Backend is online');
+          console.log('InfoLog: Backend is online');
           this.backendStatus = 'ONLINE';
         } else {
-          console.log('Backend is offline');
+          console.log('InfoLog: Backend is offline');
           this.backendStatus = 'OFFLINE';
         }
       } catch (error) {
