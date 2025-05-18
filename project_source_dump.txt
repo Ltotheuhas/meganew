@@ -79,96 +79,35 @@ import * as THREE from "three";
 import {
   ref,
   onMounted,
-  onBeforeUnmount,
-  createApp,
-  nextTick,
-  watch,
 } from "vue";
-import InfoLog from "./InfoLog.vue";
 import { useThree } from "@/composables/useThree";
 import { useControls } from "@/composables/useControls";
 import { loadImage, loadGIF, loadModel } from "@/services/threeLoaders";
 import { fetchObjects } from "@/services/objectService";
 import { createSceneActions } from "@/services/sceneActions";
-import { createInfoLogTexture, updateInfoLog } from "@/services/infoLogCanvas";
 
 export default {
   name: "ThreeJSScene",
   setup() {
     const threeContainer = ref(null);
     const { scene, camera, renderer } = useThree(threeContainer);
-    // grab ALL the things useControls returns
+
     const { controls, joystickStart, joystickMove, joystickEnd } = useControls(
       camera,
       renderer.domElement
     );
 
-    // Use your existing sceneActions to handle persistence
     const { addImage, addGIF, addModel } = createSceneActions(scene, camera);
 
-    // We'll keep track of every image plane you add for dynamic LOD swaps:
     const imagePlanes = [];
 
-    // Wrap your addImage so we can capture the mesh when it's created:
     function addImageWithLOD(uploadResult) {
       addImage(uploadResult, (mesh) => {
-        // mesh.userData.textureUrls was set in sceneActions
         imagePlanes.push(mesh);
       });
     }
 
-    let infoContainer, infoInstance, infoTexture;
-
     onMounted(async () => {
-      // --- Megaworld rotating image (same as before) ---
-      const loader = new THREE.TextureLoader();
-      loader.load(require("@/assets/megaworld.png"), (texture) => {
-        const aspect = texture.image.width / texture.image.height;
-        const plane = new THREE.Mesh(
-          new THREE.PlaneGeometry(4, 4 / aspect),
-          new THREE.MeshBasicMaterial({
-            map: texture,
-            transparent: true,
-            side: THREE.DoubleSide,
-          })
-        );
-        plane.position.set(0, 4, 0);
-        scene.add(plane);
-        (function rotate() {
-          requestAnimationFrame(rotate);
-          plane.rotation.y += 0.01;
-        })();
-      });
-
-      // --- InfoLog overlay (unchanged) ---
-      const app = createApp(InfoLog);
-      infoContainer = document.createElement("div");
-      document.body.appendChild(infoContainer);
-      infoInstance = app.mount(infoContainer);
-      await nextTick();
-
-      infoTexture = await createInfoLogTexture(infoContainer);
-      const infoAspect = infoTexture.image.width / infoTexture.image.height;
-      const infoPlane = new THREE.Mesh(
-        new THREE.PlaneGeometry(16, 16 / infoAspect),
-        new THREE.MeshBasicMaterial({ map: infoTexture, transparent: true })
-      );
-      infoPlane.position.set(0, 2, 0);
-      scene.add(infoPlane);
-
-      if (infoInstance.backendStatus !== "Checking...") {
-        updateInfoLog(infoTexture, infoContainer);
-      }
-      const stop = watch(
-        () => infoInstance.backendStatus,
-        (val) => {
-          if (val !== "Checking...") {
-            updateInfoLog(infoTexture, infoContainer);
-            stop();
-          }
-        }
-      );
-
       // --- Rehydrate saved objects, now including images ---
       const objs = await fetchObjects();
       objs.forEach((obj) => {
@@ -207,17 +146,8 @@ export default {
       });
     });
 
-    onBeforeUnmount(() => {
-      if (infoInstance) {
-        document.body.removeChild(infoContainer);
-      }
-    });
-
     const lodLoader = new THREE.TextureLoader();
 
-    //
-    // Level-of-Detail: switch texture based on camera distance
-    //
     function updateLOD() {
       imagePlanes.forEach((plane) => {
         const urls = plane.userData.textureUrls;
@@ -262,11 +192,9 @@ export default {
     return {
       threeContainer,
       controls,
-      /* joystick hooks exposed for the parent */
       joystickStart,
       joystickMove,
       joystickEnd,
-      /* uploader helpers */
       addImage: addImageWithLOD,
       addGIF,
       addModel,
@@ -327,10 +255,9 @@ const pid = ref(null); // pointerId of the finger that touched the stick
 
 function onPointerDown(e) {
   pid.value = e.pointerId;
-}
-function onStart() {
   emit("joystick-start", { id: pid.value });
 }
+function onStart() {}
 function onMove(v) {
   emit("joystick-move", { id: pid.value, dx: v.x, dy: v.y });
 }
@@ -350,6 +277,114 @@ onBeforeUnmount(() => {
     root.value.$el.removeEventListener("pointerdown", onPointerDown);
 });
 </script>
+
+
+===== src/components/HudOverlay.vue =====
+<template>
+  <div class="hud pointer-events-none select-none">
+    <!-- spinning logo -->
+    <img src="@/assets/megaworld.png" class="logo" alt="Megaworld logo" />
+
+    <!-- backend status pane -->
+    <InfoLog class="info-log" />
+
+    <!-- upload button -->
+    <button class="upload-btn pointer-events-auto" @click="toggle">
+      Upload&nbsp;Files
+    </button>
+
+    <!-- file-picker dialog -->
+    <div
+      v-if="showMenu"
+      class="upload-backdrop pointer-events-auto"
+      @click.self="toggle"
+    >
+      <!-- tap outside closes -->
+
+      <UploadMenu @upload="handleUpload" />
+    </div>
+  </div>
+</template>
+
+<script setup>
+/* global defineEmits, defineExpose */ /* ← silences no-undef */
+
+import { ref } from "vue";
+import InfoLog from "./InfoLog.vue";
+import UploadMenu from "./UploadMenu.vue";
+
+const emit = defineEmits(["upload", "menu-open", "menu-close"]);
+
+const showMenu = ref(false);
+
+function toggle() {
+  showMenu.value = !showMenu.value;
+  showMenu.value ? emit("menu-open") : emit("menu-close");
+}
+
+function handleUpload(file) {
+  emit("upload", file); // bubble to App.vue
+  showMenu.value = false;
+  emit('upload-done')
+}
+
+defineExpose({ toggle });
+</script>
+
+<style scoped>
+.hud {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.upload-btn {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  background: #fff2;
+  color: #eee;
+  font-weight: 600;
+  backdrop-filter: blur(6px);
+  border: 1px solid #fff4;
+  pointer-events: auto;
+}
+
+.upload-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30; 
+  pointer-events: auto; 
+}
+
+.logo {
+  width: clamp(120px, 15vw, 220px);
+  animation: spin 10s linear infinite;
+  margin-top: 24px;
+}
+.info-log {
+  width: clamp(260px, 80vw, 480px);
+  margin-top: 16px;
+}
+@keyframes spin {
+  from {
+    transform: rotateY(0);
+  }
+  to {
+    transform: rotateY(360deg);
+  }
+}
+</style>
 
 
 ===== src/components/UploadMenu.vue =====
@@ -372,10 +407,6 @@ onBeforeUnmount(() => {
   
   <style>
   .upload-menu {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
     background: white;
     padding: 20px;
     border: 1px solid #ccc;
@@ -388,34 +419,36 @@ onBeforeUnmount(() => {
 <template>
   <div>
     <ThreeJSScene ref="threeScene" />
-    <div class="joystick-wrapper">
+    <div v-if="isMobile" class="joystick-wrapper">
       <JoystickWrapper
-        @joystick-start="$refs.threeScene.joystickStart"
-        @joystick-move="$refs.threeScene.joystickMove"
-        @joystick-end="$refs.threeScene.joystickEnd"
+        @joystick-start="onJoyStart"
+        @joystick-move="onJoyMove"
+        @joystick-end="onJoyEnd"
       />
     </div>
-    <button v-if="isMobile" class="upload_button" @click="toggleUploadMenu">
-      Upload Files
-    </button>
-    <UploadMenu v-if="showUploadMenu" @upload="handleUpload" />
+    <HudOverlay
+      ref="hud"
+      :is-mobile="isMobile"
+      @upload="handleUpload"
+      @menu-open="exitPointerLock"
+      @upload-done="relockPointerLock"
+    />
   </div>
 </template>
 
 <script>
 import JoystickWrapper from "@/components/JoystickWrapper.vue";
 import ThreeJSScene from "./components/ThreeJSScene.vue";
-import UploadMenu from "./components/UploadMenu.vue";
+import HudOverlay from "@/components/HudOverlay.vue";
 
 export default {
   components: {
     ThreeJSScene,
-    UploadMenu,
     JoystickWrapper,
+    HudOverlay,
   },
   data() {
     return {
-      showUploadMenu: false,
       isMobile: /Mobi|Android/i.test(navigator.userAgent),
     };
   },
@@ -426,73 +459,15 @@ export default {
     window.removeEventListener("keydown", this.handleKeydown);
   },
   methods: {
-    toggleUploadMenu() {
-      this.showUploadMenu = !this.showUploadMenu;
-      if (this.showUploadMenu) {
-        // Unlock the mouse from Pointer Lock mode
-        document.exitPointerLock();
-      } else {
-        // Lock the mouse back into Pointer Lock mode if controls are initialized
-        if (
-          this.$refs.threeScene.controls &&
-          this.$refs.threeScene.controls.isLocked === false
-        ) {
-          this.$refs.threeScene.controls.lock();
-        }
-      }
+    exitPointerLock() {
+      document.exitPointerLock();
     },
-    handleKeydown(event) {
-      if (event.key.toLowerCase() === "b") {
-        this.toggleUploadMenu();
-      }
+    relockPointerLock() {
+      const c = this.$refs.threeScene.controls;
+      if (c && c.isLocked === false) c.lock();
     },
-    handleTouchStart(event) {
-      const joystickElement = this.$el.querySelector(".joystick-wrapper");
-      if (!joystickElement) return;
-
-      const touch = event.touches[0];
-      const rect = joystickElement.getBoundingClientRect();
-
-      // Check if the touch is within the joystick area
-      this.isTouchOnJoystick =
-        touch.clientX >= rect.left &&
-        touch.clientX <= rect.right &&
-        touch.clientY >= rect.top &&
-        touch.clientY <= rect.bottom;
-
-      console.log("Touch on Joystick:", this.isTouchOnJoystick); // Debugging
-
-      if (!this.isTouchOnJoystick) {
-        this.swipeTouch.x = touch.clientX;
-        this.swipeTouch.y = touch.clientY;
-
-        // Initialize yaw and pitch only if not touching the joystick
-        const { rotation } = this.$refs.threeScene.controls.object;
-        this.$refs.threeScene.yaw = rotation.y;
-        this.$refs.threeScene.pitch = rotation.x;
-      }
-    },
-    handleTouchMove(event) {
-      if (this.isTouchOnJoystick) {
-        console.log("Skipping rotateCamera due to joystick use");
-        return; // Skip rotateCamera if using joystick
-      }
-
-      const touch = event.touches[0];
-      const deltaX = touch.clientX - this.swipeTouch.x;
-      const deltaY = touch.clientY - this.swipeTouch.y;
-
-      console.log("Calling rotateCamera with:", deltaX, deltaY); // Debugging
-
-      if (this.$refs.threeScene) {
-        this.$refs.threeScene.rotateCamera(deltaX, deltaY);
-      }
-
-      this.swipeTouch.x = touch.clientX;
-      this.swipeTouch.y = touch.clientY;
-    },
-    handleTouchEnd() {
-      this.isTouchOnJoystick = false;
+    handleKeydown(e) {
+      if (e.key.toLowerCase() === "b") this.$refs.hud.toggle();
     },
     handleJoystickMove({ x, y }) {
       this.joystickX = x;
@@ -562,7 +537,6 @@ export default {
             console.error("Unsupported file type");
         }
 
-        this.showUploadMenu = false;
         if (this.$refs.threeScene.controls) {
           this.$refs.threeScene.controls.lock();
         }
@@ -570,15 +544,23 @@ export default {
         console.error("Error uploading file:", error);
       }
     },
+    onJoyStart(payload) {
+      this.$refs.threeScene?.joystickStart(payload);
+    },
+    onJoyMove(payload) {
+      this.$refs.threeScene?.joystickMove(payload);
+    },
+    onJoyEnd(payload) {
+      this.$refs.threeScene?.joystickEnd(payload);
+    },
   },
 };
 </script>
 
 <style>
-.upload_button {
-  position: absolute;
-  top: 10px;
-  right: 10px;
+html,
+body {
+  overscroll-behavior: none;
 }
 
 .joystick-wrapper {
@@ -1060,10 +1042,13 @@ export function useControls(camera, domElement) {
   /* ---------- mobile look-around with any non-joystick finger --- */
   const last = new Map(); // pointerId → {x,y}
   function onPtrDown(e) {
-    if (!joyIds.has(e.pointerId))
-      last.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (e.pointerType !== "touch") return;
+    if (joyIds.has(e.pointerId)) return;
+    last.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onPtrMove(e) {
+    if (e.pointerType !== "touch") return;
+    e.preventDefault();
     if (!last.has(e.pointerId)) return;
     const l = last.get(e.pointerId);
     camera.rotation.y -= (e.clientX - l.x) * 0.002;
@@ -1075,6 +1060,7 @@ export function useControls(camera, domElement) {
     last.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onPtrUp(e) {
+    if (e.pointerType !== 'touch') return
     last.delete(e.pointerId);
   }
 

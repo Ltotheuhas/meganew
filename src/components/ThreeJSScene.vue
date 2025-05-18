@@ -7,18 +7,14 @@ import * as THREE from "three";
 import {
   ref,
   onMounted,
-  onBeforeUnmount,
-  createApp,
-  nextTick,
-  watch,
 } from "vue";
-import InfoLog from "./InfoLog.vue";
 import { useThree } from "@/composables/useThree";
 import { useControls } from "@/composables/useControls";
 import { loadImage, loadGIF, loadModel } from "@/services/threeLoaders";
 import { fetchObjects } from "@/services/objectService";
 import { createSceneActions } from "@/services/sceneActions";
-import { createInfoLogTexture, updateInfoLog } from "@/services/infoLogCanvas";
+import { CSS3DRenderer, CSS3DObject }
+  from 'three/examples/jsm/renderers/CSS3DRenderer.js';
 
 export default {
   name: "ThreeJSScene",
@@ -45,10 +41,7 @@ export default {
       });
     }
 
-    let infoContainer, infoInstance, infoTexture;
-
     onMounted(async () => {
-      // --- Megaworld rotating image (same as before) ---
       const loader = new THREE.TextureLoader();
       loader.load(require("@/assets/megaworld.png"), (texture) => {
         const aspect = texture.image.width / texture.image.height;
@@ -68,44 +61,14 @@ export default {
         })();
       });
 
-      // --- InfoLog overlay (unchanged) ---
-      const app = createApp(InfoLog);
-      infoContainer = document.createElement("div");
-      document.body.appendChild(infoContainer);
-      infoInstance = app.mount(infoContainer);
-      await nextTick();
-
-      infoTexture = await createInfoLogTexture(infoContainer);
-      const infoAspect = infoTexture.image.width / infoTexture.image.height;
-      const infoPlane = new THREE.Mesh(
-        new THREE.PlaneGeometry(16, 16 / infoAspect),
-        new THREE.MeshBasicMaterial({ map: infoTexture, transparent: true })
-      );
-      infoPlane.position.set(0, 2, 0);
-      scene.add(infoPlane);
-
-      if (infoInstance.backendStatus !== "Checking...") {
-        updateInfoLog(infoTexture, infoContainer);
-      }
-      const stop = watch(
-        () => infoInstance.backendStatus,
-        (val) => {
-          if (val !== "Checking...") {
-            updateInfoLog(infoTexture, infoContainer);
-            stop();
-          }
-        }
-      );
-
       // --- Rehydrate saved objects, now including images ---
       const objs = await fetchObjects();
       objs.forEach((obj) => {
         const url =
           obj.type === "model"
             ? `${process.env.VUE_APP_API_URL}${obj.filePath}`
-            : `${process.env.VUE_APP_API_URL}${
-                obj.filePaths.original || obj.filePaths.large
-              }`;
+            : `${process.env.VUE_APP_API_URL}${obj.filePaths.original || obj.filePaths.large
+            }`;
         const pos = new THREE.Vector3(
           obj.position.x,
           obj.position.y,
@@ -113,11 +76,11 @@ export default {
         );
         const rot = obj.rotation.isEuler
           ? new THREE.Euler(
-              obj.rotation._x,
-              obj.rotation._y,
-              obj.rotation._z,
-              obj.rotation._order
-            )
+            obj.rotation._x,
+            obj.rotation._y,
+            obj.rotation._z,
+            obj.rotation._order
+          )
           : obj.rotation;
 
         if (obj.type === "image") {
@@ -133,19 +96,116 @@ export default {
           loadModel(scene, url, pos, rot);
         }
       });
-    });
 
-    onBeforeUnmount(() => {
-      if (infoInstance) {
-        document.body.removeChild(infoContainer);
+      const cssScene = new THREE.Scene();
+      const cssRenderer = new CSS3DRenderer();
+      cssRenderer.setSize(window.innerWidth, window.innerHeight);
+      cssRenderer.domElement.style.position = 'absolute';
+      cssRenderer.domElement.style.top = '0';
+      cssRenderer.domElement.style.left = '0';
+      cssRenderer.domElement.style.pointerEvents = 'none';   //  ← keeps pointer-lock
+      threeContainer.value.appendChild(cssRenderer.domElement);
+
+      const catcher = document.createElement('div');
+      catcher.style.cssText = `
+        position:absolute; inset:0;
+        pointer-events:none;
+        background:transparent;
+        z-index:10;
+      `;
+
+      threeContainer.value.appendChild(catcher);
+
+      catcher.addEventListener('click', () => {
+        controls.lock();                      // enter pointer-lock
+      });
+
+      controls.addEventListener('unlock', () => {
+        /* enable clicks again */
+        catcher.style.pointerEvents = 'auto';
+      });
+
+      controls.addEventListener('lock', () => {
+        /* once locked, don't eat any more clicks */
+        catcher.style.pointerEvents = 'none';
+      });
+
+      catcher.style.pointerEvents = 'auto';
+
+      /* distance in front of camera */
+      const d = 2;
+
+      /* viewport extents at that distance (world-units) */
+      const vExtent = 2 * d *
+        Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+      const hExtent = vExtent * camera.aspect;
+
+      /* build the iframe */
+      const frame = document.createElement('iframe');
+      frame.src = 'https://megaworld.xyz/';     // stays live, GIF plays
+      frame.style.border = 'none';
+      frame.style.width = '100%';
+      frame.style.height = '100%';
+      frame.style.pointerEvents = 'none';
+
+      /* ► inject <meta name="viewport" content="width=360"> once the page is ready */
+      frame.addEventListener('load', () => {
+        const doc = frame.contentDocument;              // same-origin → accessible
+        if (doc && !doc.querySelector('meta[name=viewport]')) {
+          const meta = doc.createElement('meta');
+          meta.name = 'viewport';
+          meta.content = `width=1000px`;
+          doc.head.appendChild(meta);
+          // If the site’s CSS looks at window.innerWidth on load, force a reflow:
+          doc.defaultView.dispatchEvent(new Event('resize'));
+        }
+      });
+
+      /* wrap in CSS3DObject — initial size = 1×1 CSS px */
+      const cssObj = new CSS3DObject(frame);
+
+      /* scale from CSS px to world-units
+         CSS3DRenderer maps 1 world-unit == 1 CSS px at z = 0 / perspective 1000 */
+      const SCALE = hExtent / window.innerWidth;   // world-units per CSS px
+      cssObj.scale.setScalar(SCALE);
+
+      /* face the camera and push forward d */
+      cssObj.quaternion.copy(camera.quaternion);
+      cssObj.position.copy(camera.position)
+        .add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(d));
+
+      cssScene.add(cssObj);
+
+      function animate() {
+        requestAnimationFrame(animate);
+        updateLOD();
+        renderer.render(scene, camera);
+        cssRenderer.render(cssScene, camera);   // ← add this line
       }
+      animate();
+
+      window.addEventListener('resize', () => {
+        const w = window.innerWidth, h = window.innerHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(w, h);
+        cssRenderer.setSize(w, h);
+
+        /* recompute world extents & rescale */
+        const v = 2 * d * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+        const hWorld = v * camera.aspect;
+        const scale = hWorld / w;
+        cssObj.scale.setScalar(scale);
+      });
+
+      controls.addEventListener('unlock', () => {
+        catcher.style.display = 'block';
+      });
     });
 
     const lodLoader = new THREE.TextureLoader();
 
-    //
-    // Level-of-Detail: switch texture based on camera distance
-    //
     function updateLOD() {
       imagePlanes.forEach((plane) => {
         const urls = plane.userData.textureUrls;
@@ -164,8 +224,7 @@ export default {
         const current = plane.userData.currentTextureSize;
         if (desiredSize !== current) {
           console.log(
-            `Image ${
-              plane.uuid
+            `Image ${plane.uuid
             }: switching from ${current.toUpperCase()} → ${desiredSize.toUpperCase()}`
           );
 
@@ -190,11 +249,9 @@ export default {
     return {
       threeContainer,
       controls,
-      /* joystick hooks exposed for the parent */
       joystickStart,
       joystickMove,
       joystickEnd,
-      /* uploader helpers */
       addImage: addImageWithLOD,
       addGIF,
       addModel,

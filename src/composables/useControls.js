@@ -4,6 +4,17 @@ import { PointerLockControls } from "three/examples/jsm/controls/PointerLockCont
 
 export function useControls(camera, domElement) {
   const controls = new PointerLockControls(camera, domElement);
+
+  /* swallow exactly one mousemove after every successful lock */
+  controls.addEventListener('lock', () => {
+    const swallow = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.removeEventListener('mousemove', swallow, true);
+    };
+    window.addEventListener('mousemove', swallow, true); // capture phase
+  });
+
   const move = { forward: false, backward: false, left: false, right: false };
   const joy = reactive({ dx: 0, dy: 0 });
   const joyIds = new Set(); // ← holds the pointerId(s) on the joystick
@@ -104,10 +115,12 @@ export function useControls(camera, domElement) {
   /* ---------- mobile look-around with any non-joystick finger --- */
   const last = new Map(); // pointerId → {x,y}
   function onPtrDown(e) {
+    if (e.pointerType !== "touch") return;
     if (joyIds.has(e.pointerId)) return;
     last.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onPtrMove(e) {
+    if (e.pointerType !== "touch") return;
     e.preventDefault();
     if (!last.has(e.pointerId)) return;
     const l = last.get(e.pointerId);
@@ -120,6 +133,7 @@ export function useControls(camera, domElement) {
     last.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onPtrUp(e) {
+    if (e.pointerType !== "touch") return;
     last.delete(e.pointerId);
   }
 
@@ -127,7 +141,8 @@ export function useControls(camera, domElement) {
     document.addEventListener("pointerlockerror", onPointerError);
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("keyup", onKeyUp);
-    domElement.addEventListener("click", () => controls.lock());
+    domElement.addEventListener("click", () => { controls.lock(); });
+
     window.addEventListener("pointerdown", onPtrDown, { passive: false });
     window.addEventListener("pointermove", onPtrMove, { passive: false });
     window.addEventListener("pointerup", onPtrUp);

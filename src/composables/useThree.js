@@ -31,7 +31,7 @@ export function useThree(containerRef) {
         scene.add(new THREE.GridHelper(20, 20))
         scene.add(new THREE.AxesHelper(5))
 
-        camera.position.set(0, 2, 5)
+        camera.position.set(0, 2, 2)
         window.addEventListener('resize', onResize)
         window.addEventListener('wheel', onWheel)
 

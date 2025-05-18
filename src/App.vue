@@ -8,27 +8,29 @@
         @joystick-end="onJoyEnd"
       />
     </div>
-    <button v-if="isMobile" class="upload_button" @click="toggleUploadMenu">
-      Upload Files
-    </button>
-    <UploadMenu v-if="showUploadMenu" @upload="handleUpload" />
+    <HudOverlay
+      ref="hud"
+      :is-mobile="isMobile"
+      @upload="handleUpload"
+      @menu-open="exitPointerLock"
+      @upload-done="relockPointerLock"
+    />
   </div>
 </template>
 
 <script>
 import JoystickWrapper from "@/components/JoystickWrapper.vue";
 import ThreeJSScene from "./components/ThreeJSScene.vue";
-import UploadMenu from "./components/UploadMenu.vue";
+import HudOverlay from "@/components/HudOverlay.vue";
 
 export default {
   components: {
     ThreeJSScene,
-    UploadMenu,
     JoystickWrapper,
+    HudOverlay,
   },
   data() {
     return {
-      showUploadMenu: false,
       isMobile: /Mobi|Android/i.test(navigator.userAgent),
     };
   },
@@ -39,25 +41,15 @@ export default {
     window.removeEventListener("keydown", this.handleKeydown);
   },
   methods: {
-    toggleUploadMenu() {
-      this.showUploadMenu = !this.showUploadMenu;
-      if (this.showUploadMenu) {
-        // Unlock the mouse from Pointer Lock mode
-        document.exitPointerLock();
-      } else {
-        // Lock the mouse back into Pointer Lock mode if controls are initialized
-        if (
-          this.$refs.threeScene.controls &&
-          this.$refs.threeScene.controls.isLocked === false
-        ) {
-          this.$refs.threeScene.controls.lock();
-        }
-      }
+    exitPointerLock() {
+      document.exitPointerLock();
     },
-    handleKeydown(event) {
-      if (event.key.toLowerCase() === "b") {
-        this.toggleUploadMenu();
-      }
+    relockPointerLock() {
+      const c = this.$refs.threeScene.controls;
+      if (c && c.isLocked === false) c.lock();
+    },
+    handleKeydown(e) {
+      if (e.key.toLowerCase() === "b") this.$refs.hud.toggle();
     },
     handleJoystickMove({ x, y }) {
       this.joystickX = x;
@@ -68,22 +60,11 @@ export default {
       this.joystickY = 0;
     },
     async handleUpload(file) {
-      const fileSizeLimit = 10 * 1024 * 1024; // 10MB limit
-
-      if (file.size > fileSizeLimit) {
-        alert(
-          "File size exceeds the limit of " +
-            fileSizeLimit / 1024 / 1024 +
-            "MB."
-        );
-        return;
-      }
-
       const formData = new FormData();
       formData.append("file", file);
 
       try {
-        const apiUrl = process.env.VUE_APP_API_URL; // Your backend URL
+        const apiUrl = process.env.VUE_APP_API_URL;
         const response = await fetch(`${apiUrl}/upload`, {
           method: "POST",
           body: formData,
@@ -127,7 +108,6 @@ export default {
             console.error("Unsupported file type");
         }
 
-        this.showUploadMenu = false;
         if (this.$refs.threeScene.controls) {
           this.$refs.threeScene.controls.lock();
         }
@@ -152,12 +132,6 @@ export default {
 html,
 body {
   overscroll-behavior: none;
-}
-
-.upload_button {
-  position: absolute;
-  top: 10px;
-  right: 10px;
 }
 
 .joystick-wrapper {
