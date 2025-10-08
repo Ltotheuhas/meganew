@@ -30,10 +30,10 @@ jobs:
           REMOTE_DIR: /var/www/3dworld/dist
         run: |
           # Clear the old build
-          ssh -o StrictHostKeyChecking=no megaserver@62.178.10.6 "rm -rf $REMOTE_DIR/*"
+          ssh -o StrictHostKeyChecking=no megaserver@megaworld.xyz "rm -rf $REMOTE_DIR/*"
 
           # Copy the new build
-          scp -o StrictHostKeyChecking=no -r dist/* megaserver@62.178.10.6:$REMOTE_DIR
+          scp -o StrictHostKeyChecking=no -r dist/* megaserver@megaworld.xyz:$REMOTE_DIR
 
           # Reload Nginx
-          ssh -o StrictHostKeyChecking=no megaserver@62.178.10.6 "sudo -n systemctl reload nginx"
+          ssh -o StrictHostKeyChecking=no megaserver@megaworld.xyz "sudo -n systemctl reload nginx"
