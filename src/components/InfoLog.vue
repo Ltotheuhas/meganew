@@ -1,6 +1,9 @@
 <template>
   <div class="info-log">
-    <h1 class="status">{{ backendStatus }}</h1>
+    <div style="display:flex;align-items:baseline;gap:.55rem">
+      <h1 class="status">{{ backendStatus }}</h1>
+      <h3>V{{ version }}</h3>
+    </div>
 
     <!-- controls: desktop vs mobile -->
     <template v-if="isMobile">
@@ -26,6 +29,7 @@ export default {
     return {
       backendStatus: "Checking…",
       isMobile: "ontouchstart" in window || navigator.maxTouchPoints > 0,
+      version: "1.3"
     };
   },
   mounted() {
@@ -49,6 +53,7 @@ export default {
 .status {
   margin-bottom: 0;
 }
+
 .note {
   margin-top: 0.5rem;
   font-style: italic;

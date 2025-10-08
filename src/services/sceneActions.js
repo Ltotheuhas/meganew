@@ -1,6 +1,6 @@
 // src/services/sceneActions.js
 import * as THREE from 'three'
-import { loadImage, loadGIF, loadModel } from '@/services/threeLoaders'
+import { loadImage, loadGIF, loadVideo, loadModel } from '@/services/threeLoaders'
 import { saveObject } from '@/services/objectService'
 
 /**
@@ -10,7 +10,7 @@ import { saveObject } from '@/services/objectService'
  * @param {THREE.Scene} scene
  * @param {THREE.Camera} camera
  */
-export function createSceneActions(scene, camera) {
+export function createSceneActions(scene, camera, room = 'default') {
     const forwardOffset = new THREE.Vector3(0, 0, -5)
 
     function _getPlacement() {
@@ -44,23 +44,27 @@ export function createSceneActions(scene, camera) {
                 filePaths: urls,
                 position: mesh.position,
                 rotation: mesh.rotation,
-                uuid: mesh.uuid
+                uuid: mesh.uuid,
+                room
             }).catch(console.error);
         });
     }
 
     async function addGIF(uploadResult) {
-        const url = `${process.env.VUE_APP_API_URL}${uploadResult.filePaths.original}`
-        const pos = _getPlacement()
-        const rot = camera.rotation.clone()
+        const fp = uploadResult.filePaths || {};
+        const vurl = `${process.env.VUE_APP_API_URL}${fp.videoWebm || fp.videoMp4 || fp.original}`;
+        const pos = _getPlacement();
+        const rot = camera.rotation.clone();
+        const loader = (fp.videoWebm || fp.videoMp4) ? loadVideo : loadGIF;
 
-        loadGIF(scene, url, pos, rot, mesh => {
+        loader(scene, vurl, pos, rot, mesh => {
             saveObject({
                 type: 'gif',
-                filePaths: uploadResult.filePaths,
+                filePaths: fp,
                 position: mesh.position,
                 rotation: mesh.rotation,
-                uuid: mesh.uuid
+                uuid: mesh.uuid,
+                room
             }).catch(console.error)
         })
     }
@@ -77,7 +81,8 @@ export function createSceneActions(scene, camera) {
                 extension,
                 position: mesh.position,
                 rotation: mesh.rotation,
-                uuid: mesh.uuid
+                uuid: mesh.uuid,
+                room
             }).catch(console.error)
         })
     }

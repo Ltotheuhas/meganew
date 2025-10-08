@@ -78,16 +78,12 @@ export default {
 
 <style scoped>
 .upload-menu {
-  background: #111;
-  color: #eee;
+  background: #EEE;
+  color: #111;
   padding: 20px;
   border: 1px solid #555;
   width: min(90vw, 400px);
   text-align: center;
-}
-
-.preview {
-  filter: invert(1);
 }
 
 .hint {
@@ -106,7 +102,6 @@ export default {
   max-height: 200px;
   object-fit: contain;
   margin: 10px 0;
-  border: 1px solid #333;
 }
 
 .actions {

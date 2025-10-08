@@ -3,9 +3,17 @@ import * as THREE from 'three'
 import { onMounted, onBeforeUnmount } from 'vue'
 
 export function useThree(containerRef) {
+    THREE.Cache.enabled = true;
+
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+
+    const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: false
+    })
+
     let animReq
 
     function onResize() {
@@ -25,21 +33,18 @@ export function useThree(containerRef) {
 
         renderer.setSize(window.innerWidth, window.innerHeight)
         renderer.setClearColor(0xffffff, 1)
+        renderer.outputColorSpace = THREE.SRGBColorSpace
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+
         containerRef.value.appendChild(renderer.domElement)
 
         scene.add(new THREE.AmbientLight(0xffffff))
         scene.add(new THREE.GridHelper(20, 20))
-        scene.add(new THREE.AxesHelper(5))
+        scene.add(new THREE.AxesHelper(6))
 
         camera.position.set(0, 2, 2)
         window.addEventListener('resize', onResize)
         window.addEventListener('wheel', onWheel)
-
-        const loop = () => {
-            animReq = requestAnimationFrame(loop)
-            renderer.render(scene, camera)
-        }
-        animReq = requestAnimationFrame(loop)
     })
 
     onBeforeUnmount(() => {

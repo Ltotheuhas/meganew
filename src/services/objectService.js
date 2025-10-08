@@ -1,7 +1,7 @@
 const apiUrl = process.env.VUE_APP_API_URL
 
-export async function fetchObjects() {
-    const res = await fetch(`${apiUrl}/objects`)
+export async function fetchObjects(room = 'default') {
+    const res = await fetch(`${apiUrl}/objects?room=${encodeURIComponent(room)}`)
     if (!res.ok) throw new Error(`Failed to fetch objects: ${res.statusText}`)
     return res.json()
 }

@@ -1,20 +1,11 @@
 <template>
   <div>
-    <ThreeJSScene ref="threeScene" />
+    <ThreeJSScene ref="threeScene" :blur="menuOpen" />
     <div v-if="isMobile" class="joystick-wrapper">
-      <JoystickWrapper
-        @joystick-start="onJoyStart"
-        @joystick-move="onJoyMove"
-        @joystick-end="onJoyEnd"
-      />
+      <JoystickWrapper @joystick-start="onJoyStart" @joystick-move="onJoyMove" @joystick-end="onJoyEnd" />
     </div>
-    <HudOverlay
-      ref="hud"
-      :is-mobile="isMobile"
-      @upload="handleUpload"
-      @menu-open="exitPointerLock"
-      @upload-done="relockPointerLock"
-    />
+    <HudOverlay ref="hud" :is-mobile="isMobile" @upload="handleUpload" @menu-open="onMenuOpen" @menu-close="onMenuClose"
+      @upload-done="onUploadDone" />
   </div>
 </template>
 
@@ -32,6 +23,7 @@ export default {
   data() {
     return {
       isMobile: /Mobi|Android/i.test(navigator.userAgent),
+      menuOpen: false,
     };
   },
   mounted() {
@@ -41,10 +33,15 @@ export default {
     window.removeEventListener("keydown", this.handleKeydown);
   },
   methods: {
-    exitPointerLock() {
+    onMenuOpen() {
+      this.menuOpen = true;
       document.exitPointerLock();
     },
-    relockPointerLock() {
+    onMenuClose() {
+      this.menuOpen = false;
+    },
+    onUploadDone() {
+      this.menuOpen = false;
       const c = this.$refs.threeScene.controls;
       if (c && c.isLocked === false) c.lock();
     },

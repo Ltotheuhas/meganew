@@ -1,21 +1,13 @@
 <template>
   <div class="hud pointer-events-none select-none">
-    <!-- backend status pane -->
     <InfoLog class="info-log" />
-
-    <!-- upload button -->
     <button class="upload-btn pointer-events-auto" @click="toggle">
       Upload&nbsp;Files
     </button>
+  </div>
 
-    <!-- file-picker dialog -->
-    <div
-      v-if="showMenu"
-      class="upload-backdrop pointer-events-auto"
-      @click.self="toggle"
-    >
-      <UploadMenu @upload="handleUpload" />
-    </div>
+  <div v-if="showMenu" class="upload-backdrop pointer-events-auto" @click.self="toggle">
+    <UploadMenu @upload="handleUpload" />
   </div>
 </template>
 
@@ -53,47 +45,37 @@ defineExpose({ toggle });
   align-items: flex-start;
   pointer-events: none;
   z-index: 20;
-  /*  ↓ everything inside the HUD will blend “exclusion” by default */
   mix-blend-mode: exclusion;
 }
 
-/* ---------- Upload button ---------- */
 .upload-btn {
   margin: 15px 0 0 25px;
   padding: 0.4rem 0.9rem;
-  background: transparent; /* let the blend do the colour */
-  color: #fff; /* any light colour works   */
-  border: 1px solid currentColor; /* thin Web 1.0 outline     */
-  font-family: monospace; /* retro flavour            */
+  background: transparent;
+  color: #fff;
+  border: 1px solid currentColor;
+  font-family: monospace;
   font-weight: 700;
-  pointer-events: auto; /* stay clickable           */
-  mix-blend-mode: inherit; /* use the hud’s exclusion  */
+  pointer-events: auto;
 }
 
-/* ---------- Backdrop for the modal ---------- */
 .upload-backdrop {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 30;
   pointer-events: auto;
+  mix-blend-mode: normal;
+  isolation: isolate;
+  background: rgba(0, 0, 0, 0.35);
 }
 
-/* ---------- Info-log panel ---------- */
 .info-log {
   margin-left: 25px;
   background: transparent;
-  color: #fff; /* inverted by blend */
+  color: #fff;
   font-family: monospace;
-  mix-blend-mode: inherit;
-}
-@keyframes spin {
-  from {
-    transform: rotateY(0);
-  }
-  to {
-    transform: rotateY(360deg);
-  }
 }
 </style>

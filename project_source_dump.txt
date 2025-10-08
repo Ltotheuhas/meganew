@@ -4,15 +4,22 @@
 <template>
   <div class="info-log">
     <h1 class="status">{{ backendStatus }}</h1>
-    <div v-if="isLocalhost">
-      <h2>Todo</h2>
-      <p v-for="(item, index) in todoList" :key="index">{{ item }}</p>
-    </div>
-    <div v-else>
-      <p>Press B to upload a file</p>
-      <p>Use WASD or arrow keys to move around</p>
-      <p>Currently supports images and gifs</p>
-    </div>
+
+    <!-- controls: desktop vs mobile -->
+    <template v-if="isMobile">
+      <p>Tap the <b>Upload Files</b> button to upload something</p>
+      <p>Move with the on-screen joystick</p>
+      <p>Swipe anywhere else to look around</p>
+    </template>
+    <template v-else>
+      <p>
+        Press <b>B</b> or click <b>Upload Files</b> to upload something
+      </p>
+      <p>Move with <b>W A S D</b> or arrow keys</p>
+      <p>Click once to look around with the mouse</p>
+    </template>
+
+    <p class="note">Currently supports images and GIFs</p>
   </div>
 </template>
 
@@ -20,51 +27,34 @@
 export default {
   data() {
     return {
-      backendStatus: 'Checking...',
-      isLocalhost: false
+      backendStatus: "Checking…",
+      isMobile: "ontouchstart" in window || navigator.maxTouchPoints > 0,
     };
   },
   mounted() {
-    this.isLocalhost = window.location.hostname === 'localhost';
     this.checkBackendStatus();
   },
   methods: {
     async checkBackendStatus() {
-      console.log('InfoLog: Checking backend status...');
       try {
-        const apiUrl = process.env.VUE_APP_API_URL; // or whichever var you use
-        const response = await fetch(`${apiUrl}/health`);
-        if (response.ok) {
-          console.log('InfoLog: Backend is online');
-          this.backendStatus = 'ONLINE';
-        } else {
-          console.log('InfoLog: Backend is offline');
-          this.backendStatus = 'OFFLINE';
-        }
-      } catch (error) {
-        console.error('Error checking backend status:', error);
-        this.backendStatus = 'OFFLINE';
+        const apiUrl = process.env.VUE_APP_API_URL;
+        const ok = (await fetch(`${apiUrl}/health`)).ok;
+        this.backendStatus = ok ? "ONLINE" : "OFFLINE";
+      } catch {
+        this.backendStatus = "OFFLINE";
       }
-    }
-  }
+    },
+  },
 };
 </script>
 
 <style scoped>
-.info-log {
-  text-align: center;
-  background-color: transparent;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  color: black;
-}
-
 .status {
   margin-bottom: 0;
+}
+.note {
+  margin-top: 0.5rem;
+  font-style: italic;
 }
 </style>
 
@@ -82,41 +72,64 @@ import {
 } from "vue";
 import { useThree } from "@/composables/useThree";
 import { useControls } from "@/composables/useControls";
-import { loadImage, loadGIF, loadModel } from "@/services/threeLoaders";
+import { loadImage, loadGIF, loadVideo, loadModel } from "@/services/threeLoaders";
 import { fetchObjects } from "@/services/objectService";
 import { createSceneActions } from "@/services/sceneActions";
 
 export default {
   name: "ThreeJSScene",
   setup() {
+    const ROOM = new URLSearchParams(location.search).get('room') || 'default';
     const threeContainer = ref(null);
     const { scene, camera, renderer } = useThree(threeContainer);
-
+    // grab ALL the things useControls returns
     const { controls, joystickStart, joystickMove, joystickEnd } = useControls(
       camera,
       renderer.domElement
     );
 
-    const { addImage, addGIF, addModel } = createSceneActions(scene, camera);
+    // Use your existing sceneActions to handle persistence
+    const { addImage, addGIF, addModel } = createSceneActions(scene, camera, ROOM);
 
+    // We'll keep track of every image plane you add for dynamic LOD swaps:
     const imagePlanes = [];
 
+    // Wrap your addImage so we can capture the mesh when it's created:
     function addImageWithLOD(uploadResult) {
       addImage(uploadResult, (mesh) => {
+        // mesh.userData.textureUrls was set in sceneActions
         imagePlanes.push(mesh);
       });
     }
 
     onMounted(async () => {
+      const loader = new THREE.TextureLoader();
+      loader.load(require("@/assets/megaworld.png"), (texture) => {
+        const aspect = texture.image.width / texture.image.height;
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(8, 8 / aspect),
+          new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            side: THREE.DoubleSide,
+          })
+        );
+        plane.position.set(0, 6, 0);
+        scene.add(plane);
+        (function rotate() {
+          requestAnimationFrame(rotate);
+          plane.rotation.y += 0.01;
+        })();
+      });
+
       // --- Rehydrate saved objects, now including images ---
-      const objs = await fetchObjects();
+      const objs = await fetchObjects(ROOM);
       objs.forEach((obj) => {
         const url =
           obj.type === "model"
             ? `${process.env.VUE_APP_API_URL}${obj.filePath}`
-            : `${process.env.VUE_APP_API_URL}${
-                obj.filePaths.original || obj.filePaths.large
-              }`;
+            : `${process.env.VUE_APP_API_URL}${obj.filePaths.original || obj.filePaths.large
+            }`;
         const pos = new THREE.Vector3(
           obj.position.x,
           obj.position.y,
@@ -124,11 +137,11 @@ export default {
         );
         const rot = obj.rotation.isEuler
           ? new THREE.Euler(
-              obj.rotation._x,
-              obj.rotation._y,
-              obj.rotation._z,
-              obj.rotation._order
-            )
+            obj.rotation._x,
+            obj.rotation._y,
+            obj.rotation._z,
+            obj.rotation._order
+          )
           : obj.rotation;
 
         if (obj.type === "image") {
@@ -139,11 +152,21 @@ export default {
             imagePlanes.push(mesh);
           });
         } else if (obj.type === "gif") {
-          loadGIF(scene, url, pos, rot);
+          const fp = obj.filePaths || {};
+          const vurl = `${process.env.VUE_APP_API_URL}${fp.videoWebm || fp.videoMp4 || fp.original}`;
+          (fp.videoWebm || fp.videoMp4 ? loadVideo : loadGIF)(scene, vurl, pos, rot);
         } else if (obj.type === "model") {
           loadModel(scene, url, pos, rot);
         }
       });
+
+
+      function animate() {
+        requestAnimationFrame(animate);
+        updateLOD();
+        renderer.render(scene, camera);
+      }
+      animate();
     });
 
     const lodLoader = new THREE.TextureLoader();
@@ -156,38 +179,32 @@ export default {
         // measure distance from camera to plane
         const dist = camera.position.distanceTo(plane.position);
 
-        // pick which LOD we want
-        let desiredSize;
-        if (dist > 20) desiredSize = "small";
-        else if (dist > 8) desiredSize = "medium";
-        else desiredSize = "large";
+        // hysteresis thresholds to avoid thrash
+        const cur = plane.userData.currentTextureSize || 'large';
+        let desiredSize = cur;
+        if (dist > (cur === 'medium' ? 22 : 20)) desiredSize = "small";
+        else if (dist > (cur === 'large' ? 10 : 8)) desiredSize = "medium";
+        else if (dist <= 8) desiredSize = "large";
 
         // only swap if it’s different than what we’ve got
-        const current = plane.userData.currentTextureSize;
-        if (desiredSize !== current) {
+        if (desiredSize !== cur) {
           console.log(
-            `Image ${
-              plane.uuid
-            }: switching from ${current.toUpperCase()} → ${desiredSize.toUpperCase()}`
+            `Image ${plane.uuid
+            }: switching from ${cur.toUpperCase()} → ${desiredSize.toUpperCase()}`
           );
 
           // build the URL and load it
           const url = `${process.env.VUE_APP_API_URL}${urls[desiredSize]}`;
           lodLoader.load(url, (texture) => {
+            const old = plane.material.map;
             plane.material.map = texture;
             plane.material.needsUpdate = true;
             plane.userData.currentTextureSize = desiredSize;
+            if (old && old.dispose) old.dispose();
           });
         }
       });
     }
-
-    // Insert our LOD step into the render loop
-    (function animateLoop() {
-      requestAnimationFrame(animateLoop);
-      updateLOD();
-      renderer.render(scene, camera);
-    })();
 
     return {
       threeContainer,
@@ -282,27 +299,14 @@ onBeforeUnmount(() => {
 ===== src/components/HudOverlay.vue =====
 <template>
   <div class="hud pointer-events-none select-none">
-    <!-- spinning logo -->
-    <img src="@/assets/megaworld.png" class="logo" alt="Megaworld logo" />
-
-    <!-- backend status pane -->
     <InfoLog class="info-log" />
-
-    <!-- upload button -->
     <button class="upload-btn pointer-events-auto" @click="toggle">
       Upload&nbsp;Files
     </button>
+  </div>
 
-    <!-- file-picker dialog -->
-    <div
-      v-if="showMenu"
-      class="upload-backdrop pointer-events-auto"
-      @click.self="toggle"
-    >
-      <!-- tap outside closes -->
-
-      <UploadMenu @upload="handleUpload" />
-    </div>
+  <div v-if="showMenu" class="upload-backdrop pointer-events-auto" @click.self="toggle">
+    <UploadMenu @upload="handleUpload" />
   </div>
 </template>
 
@@ -325,7 +329,7 @@ function toggle() {
 function handleUpload(file) {
   emit("upload", file); // bubble to App.vue
   showMenu.value = false;
-  emit('upload-done')
+  emit("upload-done");
 }
 
 defineExpose({ toggle });
@@ -337,83 +341,215 @@ defineExpose({ toggle });
   inset: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   pointer-events: none;
   z-index: 20;
+  mix-blend-mode: exclusion;
 }
 
 .upload-btn {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  background: #fff2;
-  color: #eee;
-  font-weight: 600;
-  backdrop-filter: blur(6px);
-  border: 1px solid #fff4;
+  margin: 15px 0 0 25px;
+  padding: 0.4rem 0.9rem;
+  background: transparent;
+  color: #fff;
+  border: 1px solid currentColor;
+  font-family: monospace;
+  font-weight: 700;
   pointer-events: auto;
 }
 
 .upload-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 30; 
-  pointer-events: auto; 
+  z-index: 30;
+  pointer-events: auto;
+  mix-blend-mode: normal;
+  isolation: isolate;
+  background: rgba(0, 0, 0, 0.35);
 }
 
-.logo {
-  width: clamp(120px, 15vw, 220px);
-  animation: spin 10s linear infinite;
-  margin-top: 24px;
-}
 .info-log {
-  width: clamp(260px, 80vw, 480px);
-  margin-top: 16px;
-}
-@keyframes spin {
-  from {
-    transform: rotateY(0);
-  }
-  to {
-    transform: rotateY(360deg);
-  }
+  margin-left: 25px;
+  background: transparent;
+  color: #fff;
+  font-family: monospace;
 }
 </style>
 
 
+===== src/components/MegaInception.vue =====
+<script setup>
+import { onMounted } from 'vue';
+import * as THREE from 'three';
+import { CSS3DRenderer, CSS3DObject }
+    from 'three/examples/jsm/renderers/CSS3DRenderer.js';
+
+defineProps(['scene', 'camera', 'container']);
+
+onMounted(() => {
+    const d = 5, PHONE_W = 360;
+    const cssScene = new THREE.Scene();
+    const cssRenderer = new CSS3DRenderer();
+    cssRenderer.setSize(window.innerWidth, window.innerHeight);
+    cssRenderer.domElement.style.position = 'absolute';
+    cssRenderer.domElement.style.top = '0';
+    cssRenderer.domElement.style.left = '0';
+    cssRenderer.domElement.style.pointerEvents = 'none';
+    container.appendChild(cssRenderer.domElement);
+
+    const iframe = document.createElement('iframe');
+    iframe.src = 'https://megaworld.xyz/';
+    iframe.style.width = PHONE_W + 'px';
+    iframe.style.border = 'none';
+    iframe.style.pointerEvents = 'none';
+
+    const obj = new CSS3DObject(iframe);
+    const extent = 2 * d * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+    obj.scale.setScalar(extent / camera.aspect / PHONE_W);
+    obj.quaternion.copy(camera.quaternion);
+    obj.position.copy(camera.position)
+        .add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(d));
+    cssScene.add(obj);
+
+    // piggy-back on main render loop
+    function renderCSS() { cssRenderer.render(cssScene, camera); requestAnimationFrame(renderCSS); }
+    renderCSS();
+});
+</script>
+
+
 ===== src/components/UploadMenu.vue =====
 <template>
-    <div class="upload-menu">
-      <input type="file" @change="handleFileUpload" />
-    </div>
-  </template>
-  
-  <script>
-  export default {
-    methods: {
-      handleFileUpload(event) {
-        const file = event.target.files[0];
-        this.$emit('upload', file);
-      },
+  <div class="upload-menu pointer-events-auto">
+    <!-- STEP 1 – pick a file -->
+    <template v-if="!file">
+      <input type="file" accept="image/*,image/gif" @change="onChoose" />
+      <p class="hint">Max 12 MB • JPG / PNG / GIF</p>
+    </template>
+
+    <!-- STEP 2 – preview + actions -->
+    <template v-else>
+      <h3>Preview</h3>
+
+      <img v-if="isImage" :src="previewUrl" class="preview" :alt="file.name" />
+
+      <p>
+        {{ file.name }} &nbsp;•&nbsp;
+        {{ (file.size / 1024 / 1024).toFixed(2) }} MB
+      </p>
+
+      <p v-if="error" class="error">{{ error }}</p>
+
+      <div class="actions">
+        <button @click="reset">Choose other</button>
+        <button :disabled="!!error" @click="upload">Upload</button>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script>
+export default {
+  emits: ["upload"],
+  data() {
+    return {
+      file: null,
+      previewUrl: null,
+      error: "",
+    };
+  },
+  computed: {
+    isImage() {
+      return this.file && this.file.type.startsWith("image/");
     },
-  };
-  </script>
-  
-  <style>
-  .upload-menu {
-    background: white;
-    padding: 20px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-  }
-  </style>
-  
+  },
+  methods: {
+    onChoose(e) {
+      const f = e.target.files[0];
+      if (!f) return;
+      this.error = "";
+      // type check
+      if (!/^image\//.test(f.type)) {
+        this.error = "Unsupported file type.";
+      }
+
+      if (f.size > 12 * 1024 * 1024) {
+        this.error = "File exceeds 12 MB.";
+      }
+      this.file = f;
+      this.previewUrl = URL.createObjectURL(f);
+    },
+    reset() {
+      URL.revokeObjectURL(this.previewUrl);
+      this.file = this.previewUrl = null;
+      this.error = "";
+    },
+    upload() {
+      // only emit if no validation errors
+      if (this.error || !this.file) return;
+      this.$emit("upload", this.file);
+      this.reset(); // clear panel after bubbling
+    },
+  },
+  beforeUnmount() {
+    if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
+  },
+};
+</script>
+
+<style scoped>
+.upload-menu {
+  background: #EEE;
+  color: #111;
+  padding: 20px;
+  border: 1px solid #555;
+  width: min(90vw, 400px);
+  text-align: center;
+}
+
+.hint {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin-top: 6px;
+}
+
+.error {
+  color: #f66;
+  margin: 6px 0;
+}
+
+.preview {
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  margin: 10px 0;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+button {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #888;
+  background: #222;
+  color: #eee;
+  cursor: pointer;
+  font-family: monospace;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+</style>
+
 
 ===== src/App.vue =====
 <template>
@@ -478,22 +614,11 @@ export default {
       this.joystickY = 0;
     },
     async handleUpload(file) {
-      const fileSizeLimit = 10 * 1024 * 1024; // 10MB limit
-
-      if (file.size > fileSizeLimit) {
-        alert(
-          "File size exceeds the limit of " +
-            fileSizeLimit / 1024 / 1024 +
-            "MB."
-        );
-        return;
-      }
-
       const formData = new FormData();
       formData.append("file", file);
 
       try {
-        const apiUrl = process.env.VUE_APP_API_URL; // Your backend URL
+        const apiUrl = process.env.VUE_APP_API_URL;
         const response = await fetch(`${apiUrl}/upload`, {
           method: "POST",
           body: formData,
@@ -575,8 +700,8 @@ body {
 ===== src/services/objectService.js =====
 const apiUrl = process.env.VUE_APP_API_URL
 
-export async function fetchObjects() {
-    const res = await fetch(`${apiUrl}/objects`)
+export async function fetchObjects(room = 'default') {
+    const res = await fetch(`${apiUrl}/objects?room=${encodeURIComponent(room)}`)
     if (!res.ok) throw new Error(`Failed to fetch objects: ${res.statusText}`)
     return res.json()
 }
@@ -646,7 +771,7 @@ export async function loadGIF(
 ) {
     const res = await fetch(url, { cache: 'no-store' })
     if (!res.ok) throw new Error(`Failed to fetch GIF (${res.status}) ${url}`)
-        
+
     const buffer = await res.arrayBuffer()
     const gif = parseGIF(buffer)
     const frames = decompressFrames(gif, true)
@@ -688,6 +813,28 @@ export async function loadGIF(
     animate()
 
     if (saveCb) saveCb(mesh)
+}
+
+export function loadVideo(scene, url, position = new THREE.Vector3(), rotation = new THREE.Euler(), saveCb) {
+    const v = document.createElement('video');
+    v.crossOrigin = 'anonymous';
+    v.src = url;
+    v.loop = true; v.muted = true; v.playsInline = true; v.autoplay = true; v.preload = 'metadata';
+    const tex = new THREE.VideoTexture(v);
+    tex.colorSpace = THREE.SRGBColorSpace;
+
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2 / (16 / 9)),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+    );
+    v.addEventListener('loadedmetadata', () => {
+        const a = (v.videoWidth || 16) / (v.videoHeight || 9);
+        mesh.geometry.dispose(); mesh.geometry = new THREE.PlaneGeometry(2, 2 / a);
+    });
+    mesh.position.copy(position); mesh.rotation.copy(rotation);
+    scene.add(mesh);
+    v.play().catch(() => { window.addEventListener('click', () => v.play(), { once: true }); });
+    if (saveCb) saveCb(mesh);
 }
 
 /** Model → Scene (auto-scaled, positioned) */
@@ -757,7 +904,7 @@ export async function loadModel(
 ===== src/services/sceneActions.js =====
 // src/services/sceneActions.js
 import * as THREE from 'three'
-import { loadImage, loadGIF, loadModel } from '@/services/threeLoaders'
+import { loadImage, loadGIF, loadVideo, loadModel } from '@/services/threeLoaders'
 import { saveObject } from '@/services/objectService'
 
 /**
@@ -767,7 +914,7 @@ import { saveObject } from '@/services/objectService'
  * @param {THREE.Scene} scene
  * @param {THREE.Camera} camera
  */
-export function createSceneActions(scene, camera) {
+export function createSceneActions(scene, camera, room = 'default') {
     const forwardOffset = new THREE.Vector3(0, 0, -5)
 
     function _getPlacement() {
@@ -801,23 +948,27 @@ export function createSceneActions(scene, camera) {
                 filePaths: urls,
                 position: mesh.position,
                 rotation: mesh.rotation,
-                uuid: mesh.uuid
+                uuid: mesh.uuid,
+                room
             }).catch(console.error);
         });
     }
 
     async function addGIF(uploadResult) {
-        const url = `${process.env.VUE_APP_API_URL}${uploadResult.filePaths.original}`
-        const pos = _getPlacement()
-        const rot = camera.rotation.clone()
+        const fp = uploadResult.filePaths || {};
+        const vurl = `${process.env.VUE_APP_API_URL}${fp.videoWebm || fp.videoMp4 || fp.original}`;
+        const pos = _getPlacement();
+        const rot = camera.rotation.clone();
+        const loader = (fp.videoWebm || fp.videoMp4) ? loadVideo : loadGIF;
 
-        loadGIF(scene, url, pos, rot, mesh => {
+        loader(scene, vurl, pos, rot, mesh => {
             saveObject({
                 type: 'gif',
-                filePaths: uploadResult.filePaths,
+                filePaths: fp,
                 position: mesh.position,
                 rotation: mesh.rotation,
-                uuid: mesh.uuid
+                uuid: mesh.uuid,
+                room
             }).catch(console.error)
         })
     }
@@ -834,7 +985,8 @@ export function createSceneActions(scene, camera) {
                 extension,
                 position: mesh.position,
                 rotation: mesh.rotation,
-                uuid: mesh.uuid
+                uuid: mesh.uuid,
+                room
             }).catch(console.error)
         })
     }
@@ -866,9 +1018,17 @@ import * as THREE from 'three'
 import { onMounted, onBeforeUnmount } from 'vue'
 
 export function useThree(containerRef) {
+    THREE.Cache.enabled = true;
+
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+
+    const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: false
+    })
+
     let animReq
 
     function onResize() {
@@ -888,21 +1048,18 @@ export function useThree(containerRef) {
 
         renderer.setSize(window.innerWidth, window.innerHeight)
         renderer.setClearColor(0xffffff, 1)
+        renderer.outputColorSpace = THREE.SRGBColorSpace
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+
         containerRef.value.appendChild(renderer.domElement)
 
         scene.add(new THREE.AmbientLight(0xffffff))
         scene.add(new THREE.GridHelper(20, 20))
-        scene.add(new THREE.AxesHelper(5))
+        scene.add(new THREE.AxesHelper(6))
 
-        camera.position.set(0, 2, 5)
+        camera.position.set(0, 2, 2)
         window.addEventListener('resize', onResize)
         window.addEventListener('wheel', onWheel)
-
-        const loop = () => {
-            animReq = requestAnimationFrame(loop)
-            renderer.render(scene, camera)
-        }
-        animReq = requestAnimationFrame(loop)
     })
 
     onBeforeUnmount(() => {
@@ -942,6 +1099,17 @@ import { PointerLockControls } from "three/examples/jsm/controls/PointerLockCont
 
 export function useControls(camera, domElement) {
   const controls = new PointerLockControls(camera, domElement);
+
+  /* swallow exactly one mousemove after every successful lock */
+  controls.addEventListener('lock', () => {
+    const swallow = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.removeEventListener('mousemove', swallow, true);
+    };
+    window.addEventListener('mousemove', swallow, true); // capture phase
+  });
+
   const move = { forward: false, backward: false, left: false, right: false };
   const joy = reactive({ dx: 0, dy: 0 });
   const joyIds = new Set(); // ← holds the pointerId(s) on the joystick
@@ -1060,7 +1228,7 @@ export function useControls(camera, domElement) {
     last.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
   function onPtrUp(e) {
-    if (e.pointerType !== 'touch') return
+    if (e.pointerType !== "touch") return;
     last.delete(e.pointerId);
   }
 
@@ -1068,7 +1236,8 @@ export function useControls(camera, domElement) {
     document.addEventListener("pointerlockerror", onPointerError);
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("keyup", onKeyUp);
-    domElement.addEventListener("click", () => controls.lock());
+    domElement.addEventListener("click", () => { controls.lock(); });
+
     window.addEventListener("pointerdown", onPtrDown, { passive: false });
     window.addEventListener("pointermove", onPtrMove, { passive: false });
     window.addEventListener("pointerup", onPtrUp);

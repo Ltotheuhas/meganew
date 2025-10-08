@@ -51,7 +51,7 @@ export async function loadGIF(
 ) {
     const res = await fetch(url, { cache: 'no-store' })
     if (!res.ok) throw new Error(`Failed to fetch GIF (${res.status}) ${url}`)
-        
+
     const buffer = await res.arrayBuffer()
     const gif = parseGIF(buffer)
     const frames = decompressFrames(gif, true)
@@ -93,6 +93,28 @@ export async function loadGIF(
     animate()
 
     if (saveCb) saveCb(mesh)
+}
+
+export function loadVideo(scene, url, position = new THREE.Vector3(), rotation = new THREE.Euler(), saveCb) {
+    const v = document.createElement('video');
+    v.crossOrigin = 'anonymous';
+    v.src = url;
+    v.loop = true; v.muted = true; v.playsInline = true; v.autoplay = true; v.preload = 'metadata';
+    const tex = new THREE.VideoTexture(v);
+    tex.colorSpace = THREE.SRGBColorSpace;
+
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2 / (16 / 9)),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+    );
+    v.addEventListener('loadedmetadata', () => {
+        const a = (v.videoWidth || 16) / (v.videoHeight || 9);
+        mesh.geometry.dispose(); mesh.geometry = new THREE.PlaneGeometry(2, 2 / a);
+    });
+    mesh.position.copy(position); mesh.rotation.copy(rotation);
+    scene.add(mesh);
+    v.play().catch(() => { window.addEventListener('click', () => v.play(), { once: true }); });
+    if (saveCb) saveCb(mesh);
 }
 
 /** Model → Scene (auto-scaled, positioned) */
